@@ -1,4 +1,4 @@
-# Meshtastic ↔ Telegram bridge with AI and weather
+# Meshtastic → Telegram bridge with AI and weather
 
 **Telegram is one-way (mesh → Telegram):** received mesh text is copied into a configured chat so you can follow traffic from Telegram. **Chat messages you send in Telegram are not forwarded to the mesh** — there is no command channel from Telegram back to the radio.
 
