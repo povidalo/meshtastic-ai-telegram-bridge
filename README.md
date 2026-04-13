@@ -1,8 +1,10 @@
 # Meshtastic ↔ Telegram bridge with AI and weather
 
+**Telegram is one-way (mesh → Telegram):** received mesh text is copied into a configured chat so you can follow traffic from Telegram. **Chat messages you send in Telegram are not forwarded to the mesh** — there is no command channel from Telegram back to the radio.
+
 This project runs next to a [Meshtastic](https://meshtastic.org/) node (over **TCP** to a network-attached device or **serial** USB) and does three things in one process:
 
-1. **Mirrors mesh text to Telegram** — every received text packet is formatted and sent to a configured chat, so you can follow the channel from your phone or desktop.
+1. **Mirrors mesh text to Telegram (one-way)** — every received text packet is formatted and sent to a configured chat, so you can follow the channel from your phone or desktop.
 2. **Optional AI auto-replies on the radio** — answers broadcast and direct messages using **Google Gemini** by default (with fallback to a **local OpenAI-compatible** server, e.g. llama.cpp), with short Russian system prompts tuned for a fixed “base node” persona.
 3. **Weather on demand and on a schedule** — integrates **Yandex Weather** for forecasts, caches results, can broadcast a narrative summary on a chosen channel, and handles simple keywords like “погода” / “weather” with an automated reply.
 
@@ -81,7 +83,7 @@ When **`AUTO_REPLY_USE_THREAD`** is on, automated and AI replies **reply in-thre
    - TCP: point `MESH_TCP_HOST` / `MESH_TCP_PORT` at your node or relay (see `config.py`).
    - Serial: set `MESH_CONNECTION_MODE` to `"serial"` and set `SERIAL_PORT` (e.g. `/dev/ttyACM0`).
 
-4. **Telegram**
+4. **Telegram** (outbound mirror only — mesh → chat, not chat → mesh)
 
    - In `config.py`, set `TELEGRAM_BOT_TOKEN` (from [@BotFather](https://t.me/BotFather)), `TELEGRAM_CHAT_ID` (destination chat), and optionally `TELEGRAM_BOT_HANDLE` / `TELEGRAM_NOTIFIER_NAME` (reference / thread label).
 
