@@ -1,0 +1,5 @@
+# Python dependencies for the Meshtastic–Telegram bridge (install with: pip install -r requirements.txt).
+meshtastic
+pypubsub
+requests
+pyTelegramBotAPI
