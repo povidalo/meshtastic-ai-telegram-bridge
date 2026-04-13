@@ -18,7 +18,14 @@ WEATHER_CACHE_FILE = _CONFIG_DIR / "weather_cache.json"  # On-disk cache for API
 MESH_PACKET_ORIGIN_CACHE_FILE = _CONFIG_DIR / "mesh_packet_origin_cache.json"
 WEATHER_STALE_HOURS = 24  # Refetch forecast when cached data is older than this many hours.
 WEATHER_BROADCAST_CHANNEL_INDEX = 0  # Primary channel index for scheduled weather broadcasts.
-WEATHER_MSK_TZ = "Europe/Moscow"  # IANA time zone for “today” and local times in weather logic.
+WEATHER_TZ = "Europe/Moscow"  # Time zone name for interpreting “today” and local times in weather logic.
+# Daily AI weather narrative on mesh + Telegram at this local wall time (WEATHER_TZ).
+WEATHER_SCHEDULE_HOUR = 7  # 0–23
+WEATHER_SCHEDULE_MINUTE = 0  # 0–59
+# Appended after the scheduled MSK AI weather on mesh and Telegram; empty string to omit.
+WEATHER_MORNING_AI_FOOTNOTE = (
+    "Я нейросеть. Пиши в DM, ответь на мое сообщение или позови @fuz."
+)
 
 # --- Meshtastic device link (TCP to a network device or USB serial) ---
 MESH_CONNECTION_MODE = "tcp"  # How to reach the radio: "tcp" or "serial".
@@ -154,7 +161,7 @@ _PROTO_DATA_PAYLOAD_LEN = int(mesh_pb2.Constants.DATA_PAYLOAD_LEN)
 MESH_PROTO_DATA_PAYLOAD_MAX_BYTES = _PROTO_DATA_PAYLOAD_LEN  # Documented maximum raw payload size for reference.
 MESH_TEXT_PAYLOAD_SAFETY_MARGIN_BYTES = 24  # Shrink each chunk by this many bytes under the protocol max for RF reliability.
 MESH_TEXT_MAX_PAYLOAD_BYTES = _PROTO_DATA_PAYLOAD_LEN - MESH_TEXT_PAYLOAD_SAFETY_MARGIN_BYTES  # Per-part UTF-8 budget when splitting.
-MESH_TEXT_MAX_PARTS = 3  # Maximum number of mesh packets for one logical outgoing message.
+MESH_TEXT_MAX_PARTS = 4  # Maximum number of mesh packets for one logical outgoing message.
 
 MESH_MULTI_PART_DELAY_SEC = 2.0  # Pause between sending consecutive parts of a split message.
 MESH_MULTI_PART_SEND_RETRIES = 3  # Retries per part when sending multi-part text.

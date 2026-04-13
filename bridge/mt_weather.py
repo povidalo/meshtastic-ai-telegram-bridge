@@ -1,4 +1,4 @@
-"""Yandex Weather v2: cache file, 24h staleness, MSK 07:00 narrative broadcast."""
+"""Yandex Weather v2: cache file, 24h staleness, daily MSK narrative broadcast (time from config)."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ import config
 from . import mt_state
 from .mt_mesh_send import send_mesh_text
 
-_MSK = ZoneInfo(config.WEATHER_MSK_TZ)
+_MSK = ZoneInfo(config.WEATHER_TZ)
 _state_lock = threading.Lock()
 _raw: Optional[Dict[str, Any]] = None
 _fetched_at: Optional[datetime] = None
@@ -328,12 +328,27 @@ def refresh_if_stale() -> None:
         mt_state.log.log("log", "yandex weather: no data after failed fetch")
 
 
-def _seconds_until_7am_msk() -> float:
-    now = datetime.now(_MSK)
-    target = now.replace(hour=7, minute=0, second=0, microsecond=0)
+def _weather_schedule_target(now: datetime) -> datetime:
+    h = int(config.WEATHER_SCHEDULE_HOUR)
+    m = int(config.WEATHER_SCHEDULE_MINUTE)
+    target = now.replace(hour=h, minute=m, second=0, microsecond=0)
     if now >= target:
         target += timedelta(days=1)
-    return max(0.0, (target - now).total_seconds())
+    return target
+
+
+def _weather_schedule_time_label() -> str:
+    """Human-readable slot for logs/Telegram (e.g. 07:00 MSK)."""
+    now = datetime.now(_MSK)
+    h = int(config.WEATHER_SCHEDULE_HOUR)
+    m = int(config.WEATHER_SCHEDULE_MINUTE)
+    return now.replace(hour=h, minute=m, second=0, microsecond=0).strftime("%H:%M %Z")
+
+
+def _seconds_until_scheduled_weather_msk() -> tuple[float, datetime]:
+    now = datetime.now(_MSK)
+    target = _weather_schedule_target(now)
+    return max(0.0, (target - now).total_seconds()), target
 
 
 def _broadcast_weather_narrative(text: str) -> None:
@@ -375,11 +390,13 @@ def _morning_job() -> None:
     if not narrative:
         mt_state.log.log("log", "weather morning job: empty narrative")
         return
-    _broadcast_weather_narrative(narrative)
+    note = (config.WEATHER_MORNING_AI_FOOTNOTE or "").strip()
+    out = f"{narrative}\n\n{note}" if note else narrative
+    _broadcast_weather_narrative(out)
     if config.TELEGRAM_NOTIFY_MESH_AUTO_REPLY:
         try:
             mt_state.notifier.send(
-                f"[mesh weather 07:00 MSK · {mesh_auto_reply_source_caption(prov)}]\n{narrative}",
+                f"[mesh weather {_weather_schedule_time_label()} · {mesh_auto_reply_source_caption(prov)}]\n{out}",
                 config.TELEGRAM_CHAT_ID,
             )
         except Exception as ex:
@@ -392,8 +409,11 @@ def _scheduler_loop() -> None:
     except Exception as ex:
         mt_state.log.log("log", f"weather startup refresh error: {ex}")
     while not mt_state._shutdown.is_set():
-        wait = _seconds_until_7am_msk()
-        mt_state.log.log("log", f"weather scheduler: next 07:00 MSK in {wait:.0f}s")
+        wait, next_at = _seconds_until_scheduled_weather_msk()
+        mt_state.log.log(
+            "log",
+            f"weather scheduler: next {next_at.strftime('%H:%M %Z')} in {wait:.0f}s",
+        )
         end = time.monotonic() + wait
         while time.monotonic() < end:
             if mt_state._shutdown.is_set():
