@@ -1,76 +1,78 @@
-# Meshtastic → Telegram bridge with AI and weather
+[English](README_EN.md)
 
-**Telegram is one-way (mesh → Telegram):** received mesh text is copied into a configured chat so you can follow traffic from Telegram. **Chat messages you send in Telegram are not forwarded to the mesh** — there is no command channel from Telegram back to the radio.
+# Мост Meshtastic → Telegram с ИИ и погодой
 
-This project runs next to a [Meshtastic](https://meshtastic.org/) node (over **TCP** to a network-attached device or **serial** USB) and does three things in one process:
+**Telegram работает в одну сторону (mesh → Telegram):** полученный текст из mesh копируется в настроенный чат, чтобы вы могли следить за трафиком из Telegram. **Сообщения, которые вы пишете в Telegram, на радио не пересылаются** — обратного командного канала из Telegram к радио нет.
 
-1. **Mirrors mesh text to Telegram (one-way)** — every received text packet is formatted and sent to a configured chat, so you can follow the channel from your phone or desktop.
-2. **Optional AI auto-replies on the radio** — answers broadcast and direct messages using **Google Gemini** by default (with fallback to a **local OpenAI-compatible** server, e.g. llama.cpp), with short Russian system prompts tuned for a fixed “base node” persona.
-3. **Weather on demand and on a schedule** — integrates **Yandex Weather** for forecasts, caches results, can broadcast a narrative summary on a chosen channel, and handles simple keywords like “погода” / “weather” with an automated reply.
+Проект запускается рядом с узлом [Meshtastic](https://meshtastic.org/) (по **TCP** к устройству в сети или по **serial** USB) и в одном процессе делает три вещи:
 
-It also includes small **automation hooks**: ignore rules for noisy or bot-generated traffic, instant **ping → pong**, threading-aware replies when Meshtastic supports it, **multi-part mesh sends** with payload limits aligned to the firmware, and optional **Telegram notifications** when the bot sends an AI reply on the mesh.
+1. **Дублирует текст из mesh в Telegram (односторонне)** — каждый принятый текстовый пакет форматируется и отправляется в настроенный чат, чтобы вы могли следить за каналом с телефона или компьютера.
+2. **По желанию — автоответы ИИ по радио** — отвечает на широковещательные и личные сообщения, по умолчанию через **Google Gemini** (с запасным вариантом — **локальный сервер в стиле OpenAI**, например llama.cpp), с короткими русскими системными промптами под фиксированную роль «базового узла».
+3. **Погода по запросу и по расписанию** — интеграция с **Яндекс.Погодой**: прогнозы, кэширование, возможность передать краткий текстовый обзор в выбранный канал и обработка простых ключевых слов вроде «погода» / «weather» с автоматическим ответом.
 
-Configuration is **code-only** (no CLI): edit `config.py` at the repository root of this folder. Each setting has a short comment explaining what it does.
+Также есть небольшие **хуки автоматизации**: правила игнорирования шумного или бот-трафика, мгновенный **ping → pong**, ответы с учётом тредов там, где Meshtastic это поддерживает, **многочастные отправки** в mesh с лимитами под прошивку и по желанию **уведомления в Telegram**, когда бот отправляет ответ ИИ в mesh.
 
-## Using the bot on the mesh (commands, mentions, threading)
+Настройка **только в коде** (без CLI): редактируйте `config.py` в корне этого репозитория. У каждого параметра есть короткий комментарий, что он делает.
 
-Everything below is driven by regex and flags in `config.py` — adjust patterns and names to match your node and language.
+## Использование бота в mesh (команды, упоминания, треды)
 
-**What always happens first**
+Всё ниже задаётся регулярными выражениями и флагами в `config.py` — подстройте шаблоны и имена под свой узел и язык.
 
-- Incoming text is **mirrored to Telegram** (unless filtered as non-text noise earlier in the pipeline).
-- The bridge **never auto-replies to its own node** (echo from your own radio is ignored for automation).
+**Что всегда происходит в начале**
 
-**Automated replies (no general chat model)**
+- Входящий текст **дублируется в Telegram** (если раньше по конвейеру он не отфильтрован как не-текстовый шум).
+- Мост **никогда не автоотвечает своему же узлу** (эхо с вашего радио для автоматики игнорируется).
 
-These run **before** the main AI and only match the **whole** message (after strip), with an optional leading `/`:
+**Автоматические ответы (без общей чат-модели)**
 
-1. **Ping / test** — messages like `ping`, `test`, `тест`, `пинг` (see `MESH_AUTOMATED_PONG_REGEX`) get a fixed **pong** (`MESH_AUTOMATED_PONG_TEXT`) plus a short **RF summary** (SNR/RSSI when available).
-2. **Weather keywords** — messages like `погода`, `прогноз`, `weather`, `forecast` (see `MESH_AUTOMATED_WEATHER_REGEX`) trigger a **forecast reply**: cached **Yandex** data is turned into a short narrative by the AI stack (see fallback below). If data is missing, a short error line is sent instead.
+Выполняются **до** основного ИИ и срабатывают только на **целое** сообщение (после `strip`), с необязательным ведущим `/`:
 
-**Side threads on broadcast**
+1. **Ping / test** — сообщения вроде `ping`, `test`, `тест`, `пинг` (см. `MESH_AUTOMATED_PONG_REGEX`) получают фиксированный **pong** (`MESH_AUTOMATED_PONG_TEXT`) и короткую **RF-сводку** (SNR/RSSI, если доступны).
+2. **Ключевые слова погоды** — сообщения вроде `погода`, `прогноз`, `weather`, `forecast` (см. `MESH_AUTOMATED_WEATHER_REGEX`) вызывают **ответ с прогнозом**: закэшированные данные **Яндекса** превращаются в короткий текст через стек ИИ (см. запасной вариант ниже). Если данных нет, отправляется короткая строка об ошибке.
 
-On **broadcast**, ping/pong and weather automation are **skipped** when the message is a **threaded reply to someone else’s packet** (so the bot does not jump into other people’s sub-threads). **Direct messages** are not affected by this rule.
+**Побочные треды в широковещании**
 
-**General AI (chat) replies**
+В **широковещании** автоматика ping/pong и погоды **пропускается**, если сообщение — **ответ в треде на чужой пакет** (чтобы бот не влезал в чужие подтреды). **Личные сообщения** этим правилом не затрагиваются.
 
-- **Direct messages (DMs)** to the node: the model can run on every suitable message (subject to ignore rules below).
-- **Broadcast channel**: the bot only starts a **general** AI turn if either:
-  - the message is in a **reply thread** to a packet the bridge recently sent (so it continues *your* conversation), or
-  - the text matches **`AI_BROADCAST_DIRECT_MENTION_RE`** (e.g. configured @-style mentions of your node), so people can **call the bot by name** on channel without threading.
+**Общие ответы ИИ (чат)**
 
-If a broadcast message is threaded to another node and there is **no** mention match, **general AI is skipped** (automated ping/weather are already skipped in that case too).
+- **Личные сообщения (DM)** узлу: модель может отрабатывать на каждом подходящем сообщении (с учётом правил игнорирования ниже).
+- **Широковещательный канал**: бот запускает **общий** ход ИИ только если:
+  - сообщение в **треде ответа** на пакет, который мост недавно отправил (продолжение *вашего* разговора), или
+  - текст совпадает с **`AI_BROADCAST_DIRECT_MENTION_RE`** (например, настроенные @-упоминания вашего узла), чтобы люди могли **вызвать бота по имени** в канале без треда.
 
-**Ignore list (general AI only)**
+Если широковещательное сообщение привязано к треду другого узла и **нет** совпадения по упоминанию, **общий ИИ не запускается** (автоматика ping/погоды в этом случае тоже уже отключена).
 
-If the plain text matches any pattern in **`AI_IGNORE_MESSAGE_REGEXES`**, **general AI** is skipped for that packet. **Ping/pong and weather-keyword handling do not use this list** (they run earlier in the pipeline). **Telegram mirroring still happens.**
+**Список игнорирования (только для общего ИИ)**
 
-**Broadcast timing**
+Если простой текст совпадает с любым шаблоном из **`AI_IGNORE_MESSAGE_REGEXES`**, для этого пакета **общий ИИ** не вызывается. **Ping/pong и обработка ключевых слов погоды этот список не используют** (они идут раньше по конвейеру). **Зеркалирование в Telegram по-прежнему выполняется.**
 
-On broadcast, after generation starts the bridge can **wait** up to **`AI_BROADCAST_MIN_SEC_BEFORE_SEND`** seconds before transmitting. **New mesh traffic** in that window **cancels** the pending reply and starts a **new** turn so the answer stays relevant.
+**Тайминг в широковещании**
 
-**Model routing and fallback**
+В широковещании после старта генерации мост может **ждать** до **`AI_BROADCAST_MIN_SEC_BEFORE_SEND`** секунд перед передачей. **Новый трафик в mesh** в этом окне **отменяет** отложенный ответ и начинает **новый** ход, чтобы ответ оставался актуальным.
 
-- For **broadcast** traffic, **Gemini is tried first** when enabled; if it **fails** or returns **empty** text, the bridge **falls back to the local OpenAI-compatible server** (llama).
-- For **DMs**, whether Gemini is used at all is controlled by **`AI_USE_GEMINI_IN_DM`**. If Gemini is used, the same **failure / empty → llama** fallback applies.
-- **Weather keyword** replies use the same pattern: **Gemini first** (with the weather-specific system prompt), then **llama** if needed.
+**Маршрутизация модели и запасной вариант**
 
-**Threading on the air**
+- Для **широковещания** сначала пробуется **Gemini**, если он включён; при **сбое** или **пустом** ответе мост **переходит на локальный OpenAI-совместимый сервер** (llama).
+- Для **DM** использование Gemini целиком задаётся **`AI_USE_GEMINI_IN_DM`**. Если Gemini используется, тот же сценарий **сбой / пусто → llama**.
+- Ответы по **ключевым словам погоды** устроены так же: **сначала Gemini** (с отдельным системным промптом для погоды), при необходимости **llama**.
 
-When **`AUTO_REPLY_USE_THREAD`** is on, automated and AI replies **reply in-thread** to the triggering packet when Meshtastic supports it, which keeps conversations grouped on clients that show threads.
+**Треды по эфиру**
 
-## Layout
+Когда включён **`AUTO_REPLY_USE_THREAD`**, автоматические и ИИ-ответы **отправляются в тред** к пакету-триггеру там, где Meshtastic это поддерживает — так разговоры группируются в клиентах с тредами.
 
-- `main.py` — entrypoint; wires logging, Telegram, pubsub, weather scheduler, and the mesh session.
-- `config.py` — all settings and prompts.
-- `bridge/` — implementation (`mt_*` modules): mesh I/O, chunking, packets, AI routing, weather, Telegram formatting.
-- `utils/` — threaded file logger and Telegram sender (`pyTelegramBotAPI`).
+## Структура проекта
 
-## Setup
+- `main.py` — точка входа: логирование, Telegram, pubsub, планировщик погоды, сессия с mesh.
+- `config.py` — все настройки и промпты.
+- `bridge/` — реализация (модули `mt_*`): ввод-вывод mesh, нарезка, пакеты, маршрутизация ИИ, погода, форматирование для Telegram.
+- `utils/` — потокобезопасный файловый логгер и отправка в Telegram (`pyTelegramBotAPI`).
 
-1. **Python 3.10+** recommended (uses `zoneinfo`, type syntax used in the code).
+## Установка
 
-2. Create a virtualenv and install dependencies:
+1. Рекомендуется **Python 3.10+** (используется `zoneinfo`, синтаксис типов в коде).
+
+2. Создайте виртуальное окружение и установите зависимости:
 
    ```bash
    python3 -m venv .venv
@@ -78,39 +80,39 @@ When **`AUTO_REPLY_USE_THREAD`** is on, automated and AI replies **reply in-thre
    pip install -r requirements.txt
    ```
 
-3. **Meshtastic connectivity**
+3. **Подключение к Meshtastic**
 
-   - TCP: point `MESH_TCP_HOST` / `MESH_TCP_PORT` at your node or relay (see `config.py`).
-   - Serial: set `MESH_CONNECTION_MODE` to `"serial"` and set `SERIAL_PORT` (e.g. `/dev/ttyACM0`).
+   - TCP: укажите `MESH_TCP_HOST` / `MESH_TCP_PORT` на ваш узел или ретранслятор (см. `config.py`).
+   - Serial: установите `MESH_CONNECTION_MODE` в `"serial"` и задайте `SERIAL_PORT` (например `/dev/ttyACM0`).
 
-4. **Telegram** (outbound mirror only — mesh → chat, not chat → mesh)
+4. **Telegram** (только исходящее зеркало — mesh → чат, не чат → mesh)
 
-   - In `config.py`, set `TELEGRAM_BOT_TOKEN` (from [@BotFather](https://t.me/BotFather)), `TELEGRAM_CHAT_ID` (destination chat), and optionally `TELEGRAM_BOT_HANDLE` / `TELEGRAM_NOTIFIER_NAME` (reference / thread label).
+   - В `config.py` задайте `TELEGRAM_BOT_TOKEN` (от [@BotFather](https://t.me/BotFather)), `TELEGRAM_CHAT_ID` (целевой чат), при необходимости `TELEGRAM_BOT_HANDLE` / `TELEGRAM_NOTIFIER_NAME` (ссылка / подпись треда).
 
-5. **Yandex Weather** — set `YANDEX_WEATHER_API_KEY` and coordinates in `config.py`. Forecast URL and timeouts are there as well.
+5. **Яндекс.Погода** — задайте `YANDEX_WEATHER_API_KEY` и координаты в `config.py`. URL прогноза и таймауты тоже там.
 
-6. **AI backends**
+6. **Бэкенды ИИ**
 
-   - **Gemini:** `GEMINI_API_KEY`, `GEMINI_MODEL`, and timeout settings in `config.py`. Used for broadcast by default; `AI_USE_GEMINI_IN_DM` controls whether DMs try Gemini before llama.
-   - **Local llama (OpenAI-compatible):** `LLAMA_BASE_URL`, `LLAMA_MODEL`, token/temperature/timeouts. Must match what your server exposes (e.g. model id string).
+   - **Gemini:** `GEMINI_API_KEY`, `GEMINI_MODEL` и настройки таймаутов в `config.py`. По умолчанию для широковещания; `AI_USE_GEMINI_IN_DM` — использовать ли Gemini в DM до llama.
+   - **Локальный llama (OpenAI-совместимый):** `LLAMA_BASE_URL`, `LLAMA_MODEL`, лимиты токенов/температура/таймауты. Должно совпадать с тем, что отдаёт ваш сервер (например строка id модели).
 
-7. Run from this directory so imports resolve:
+7. Запуск из этой директории, чтобы импорты разрешались:
 
    ```bash
    python main.py
    ```
 
-   Logs go under `LOG_DIR` (default `mesh_logs`). Runtime cache files (`weather_cache.json`, `mesh_packet_origin_cache.json`) are created next to `config.py`.
+   Логи пишутся в `LOG_DIR` (по умолчанию `mesh_logs`). Файлы кэша во время работы (`weather_cache.json`, `mesh_packet_origin_cache.json`) создаются рядом с `config.py`.
 
-## Critical configuration (reference)
+## Критичные настройки (справка)
 
-| Area | What to set |
-|------|-------------|
-| Radio link | `MESH_CONNECTION_MODE`, `MESH_TCP_HOST`, `MESH_TCP_PORT`, or `SERIAL_PORT` |
-| Telegram | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`; optional `TELEGRAM_BOT_HANDLE`, `TELEGRAM_NOTIFIER_NAME` |
-| Weather | `YANDEX_WEATHER_*`, `WEATHER_BROADCAST_CHANNEL_INDEX`, `WEATHER_STALE_HOURS`, `WEATHER_TZ` |
-| AI | `AUTO_REPLY_ENABLED`, `LLAMA_*`, `GEMINI_*`, `AI_USE_GEMINI_IN_DM`, `AI_CONTEXT_MAX_MESSAGES`, `AI_BROADCAST_MIN_SEC_BEFORE_SEND`, `AI_BROADCAST_DIRECT_MENTION_RE`, `AI_IGNORE_MESSAGE_REGEXES` |
-| Persona / text | `MODEL_NAME`, `LLAMA_SYSTEM_PROMPT`, `GEMINI_SYSTEM_PROMPT`, weather narrative prompts |
-| Mesh protocol safety | `MESH_TEXT_MAX_PAYLOAD_BYTES`, `MESH_TEXT_MAX_PARTS`, `MESH_MULTI_PART_*`, `MESH_ROUTING_ACK_TIMEOUT_SEC` |
+| Область | Что задать |
+|---------|------------|
+| Радиоканал | `MESH_CONNECTION_MODE`, `MESH_TCP_HOST`, `MESH_TCP_PORT` или `SERIAL_PORT` |
+| Telegram | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`; опционально `TELEGRAM_BOT_HANDLE`, `TELEGRAM_NOTIFIER_NAME` |
+| Погода | `YANDEX_WEATHER_*`, `WEATHER_BROADCAST_CHANNEL_INDEX`, `WEATHER_STALE_HOURS`, `WEATHER_TZ` |
+| ИИ | `AUTO_REPLY_ENABLED`, `LLAMA_*`, `GEMINI_*`, `AI_USE_GEMINI_IN_DM`, `AI_CONTEXT_MAX_MESSAGES`, `AI_BROADCAST_MIN_SEC_BEFORE_SEND`, `AI_BROADCAST_DIRECT_MENTION_RE`, `AI_IGNORE_MESSAGE_REGEXES` |
+| Персона / текст | `MODEL_NAME`, `LLAMA_SYSTEM_PROMPT`, `GEMINI_SYSTEM_PROMPT`, промпты для текста погоды |
+| Безопасность протокола mesh | `MESH_TEXT_MAX_PAYLOAD_BYTES`, `MESH_TEXT_MAX_PARTS`, `MESH_MULTI_PART_*`, `MESH_ROUTING_ACK_TIMEOUT_SEC` |
 
-For full semantics (regex automation, threading, notification flags), read the comments in `config.py` next to each setting.
+Полную семантику (регулярки автоматизации, треды, флаги уведомлений) смотрите в комментариях в `config.py` у каждого параметра.
