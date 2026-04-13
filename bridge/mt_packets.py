@@ -120,6 +120,7 @@ class MeshMessageDetails:
     hop_count: Optional[int]
     rssi: Optional[float]
     snr: Optional[float]
+    via_mqtt: bool  # firmware: viaMqtt or transportMechanism == TRANSPORT_MQTT
     message: str
     mesh_packet_id: Optional[int]
     to_node: int
@@ -173,6 +174,13 @@ def _sender_display_name(interface: MeshInterface, sender_num: int) -> str:
     if short_n:
         return str(short_n)
     return f"!{sender_num:08x}"
+
+
+def _packet_via_mqtt_from_proto(packet: dict[str, Any]) -> bool:
+    """Use MeshPacket flags (more reliable than missing RSSI/SNR alone)."""
+    if packet.get("viaMqtt") is True:
+        return True
+    return packet.get("transportMechanism") == "TRANSPORT_MQTT"
 
 
 def _hop_count(packet: dict[str, Any]) -> Optional[int]:
@@ -252,15 +260,19 @@ def packet_to_details(
     if mid is not None:
         remember_mesh_text_packet_origin(mid, sender_node_id)
 
+    hop_count = _hop_count(packet)
+    via_mqtt = _packet_via_mqtt_from_proto(packet)
+
     return MeshMessageDetails(
         channel_index=channel_index,
         channel_name=ch_name,
         sender_node_id=sender_node_id,
         sender_display_name=_sender_display_name(interface, sender_node_id),
         received_at=_parse_rx_time(packet),
-        hop_count=_hop_count(packet),
+        hop_count=hop_count,
         rssi=rssi_f,
         snr=snr_f,
+        via_mqtt=via_mqtt,
         message=text,
         mesh_packet_id=mid,
         to_node=to_node,

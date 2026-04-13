@@ -367,7 +367,15 @@ def _build_system_prompt(*, use_gemini_prompt: bool) -> str:
     )
 
 
+def _implied_mqtt_path(d: MeshMessageDetails) -> bool:
+    if d.via_mqtt:
+        return True
+    return d.snr is None and d.rssi is None and d.hop_count == 0
+
+
 def _format_rf_meta(d: MeshMessageDetails) -> str:
+    if _implied_mqtt_path(d):
+        return "(Сообщение пришло через MQTT-сервер)"
     parts: List[str] = []
     # SNR/RSSI appended for the model; bands in config.LLAMA_SYSTEM_PROMPT
     if d.snr is not None:
