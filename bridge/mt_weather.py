@@ -307,8 +307,12 @@ def apply_fresh_payload(raw: Dict[str, Any], when: Optional[datetime] = None) ->
     _write_cache_file()
 
 
-def refresh_if_stale() -> None:
-    """Fetch from API when stale or missing; keeps previous raw on failure."""
+def refresh_if_stale(*, force: bool = False) -> None:
+    """Fetch from API when stale or missing; keeps previous raw on failure.
+
+    If ``force`` is True, always call the API (scheduled morning job); on failure,
+    existing in-memory or disk cache is left unchanged.
+    """
     with _state_lock:
         fetched = _fetched_at
         has_raw = _raw is not None
@@ -317,7 +321,7 @@ def refresh_if_stale() -> None:
         with _state_lock:
             fetched = _fetched_at
             has_raw = _raw is not None
-    if has_raw and not _is_stale(fetched):
+    if not force and has_raw and not _is_stale(fetched):
         mt_state.log.log("log", "yandex weather: using cache (fresh enough)")
         return
     data = fetch_from_api()
@@ -372,7 +376,7 @@ def _broadcast_weather_narrative(text: str) -> None:
 
 
 def _morning_job() -> None:
-    refresh_if_stale()
+    refresh_if_stale(force=True)
     from .mt_ai_reply import complete_weather_narrative
     from .mt_telegram import mesh_auto_reply_source_caption
 
