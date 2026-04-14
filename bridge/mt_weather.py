@@ -270,32 +270,46 @@ def fetch_from_api() -> Optional[Dict[str, Any]]:
         return None
     params = {"lat": config.YANDEX_WEATHER_LAT, "lon": config.YANDEX_WEATHER_LON}
     headers = {"X-Yandex-Weather-Key": key}
-    try:
-        r = requests.get(
-            config.YANDEX_WEATHER_FORECAST_URL,
-            params=params,
-            headers=headers,
-            timeout=config.YANDEX_WEATHER_REQUEST_TIMEOUT_SEC,
-        )
-        txt = r.text
+    max_attempts = 3
+    initial_delay_sec = 10.0
+    for attempt in range(1, max_attempts + 1):
         try:
-            data = r.json()
-        except ValueError:
-            data = None
-        mt_state.log.log(
-            "log",
-            f"yandex weather HTTP {r.status_code} bytes={len(txt)}",
-        )
-        r.raise_for_status()
-        if not isinstance(data, dict):
-            return None
-        if "message" in data and "forecasts" not in data and "fact" not in data:
-            mt_state.log.log("log", f"yandex weather error payload: {data!r}")
-            return None
-        return data
-    except Exception as ex:
-        mt_state.log.log("log", f"yandex weather request failed: {ex}")
-        return None
+            r = requests.get(
+                config.YANDEX_WEATHER_FORECAST_URL,
+                params=params,
+                headers=headers,
+                timeout=config.YANDEX_WEATHER_REQUEST_TIMEOUT_SEC,
+            )
+            txt = r.text
+            try:
+                data = r.json()
+            except ValueError:
+                data = None
+            mt_state.log.log(
+                "log",
+                f"yandex weather HTTP {r.status_code} bytes={len(txt)}",
+            )
+            r.raise_for_status()
+            if not isinstance(data, dict):
+                return None
+            if "message" in data and "forecasts" not in data and "fact" not in data:
+                mt_state.log.log("log", f"yandex weather error payload: {data!r}")
+                return None
+            return data
+        except Exception as ex:
+            mt_state.log.log(
+                "log",
+                f"yandex weather request failed (attempt {attempt}/{max_attempts}): {ex}",
+            )
+            if attempt >= max_attempts:
+                return None
+            delay = initial_delay_sec * (2 ** (attempt - 1))
+            mt_state.log.log(
+                "log",
+                f"yandex weather retry in {delay:.1f}s",
+            )
+            time.sleep(delay)
+    return None
 
 
 def apply_fresh_payload(raw: Dict[str, Any], when: Optional[datetime] = None) -> None:
@@ -391,6 +405,8 @@ def _morning_job() -> None:
             extra_system_instruction=(
                 "Это утренний плановый прогноз. Начни ответ с короткого пожелания доброго утра."
             ),
+            gemini_max_retries=3,
+            gemini_retry_initial_delay_sec=15.0,
         )
     except Exception as ex:
         mt_state.log.log("log", f"weather narrative LLM failed: {ex}")

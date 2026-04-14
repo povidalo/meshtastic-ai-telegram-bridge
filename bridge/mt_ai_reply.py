@@ -559,18 +559,33 @@ def _call_ai_with_routing(
     is_direct_message: bool,
     system_prompt: Optional[str] = None,
     gemini_system_prompt: Optional[str] = None,
+    gemini_max_retries: int = 0,
+    gemini_retry_initial_delay_sec: float = 15.0,
 ) -> Tuple[str, Literal["gemini", "llama"]]:
     """If gemini_system_prompt is set, Gemini uses it; llama always uses system_prompt."""
     gemini_sys = gemini_system_prompt if gemini_system_prompt is not None else system_prompt
     use_gemini = _use_gemini_for_request(is_direct_message=is_direct_message)
     if use_gemini:
-        try:
-            reply = _call_gemini(messages, system_prompt=gemini_sys).strip()
-            if reply:
-                return reply, "gemini"
-            mt_state.log.log("log", "gemini returned empty reply; falling back to llama")
-        except Exception as ex:
-            mt_state.log.log("log", f"gemini failed; falling back to llama: {ex}")
+        retries = max(0, int(gemini_max_retries))
+        base_delay = max(0.0, float(gemini_retry_initial_delay_sec))
+        for attempt in range(retries + 1):
+            try:
+                reply = _call_gemini(messages, system_prompt=gemini_sys).strip()
+                if reply:
+                    return reply, "gemini"
+                mt_state.log.log("log", "gemini returned empty reply")
+            except Exception as ex:
+                mt_state.log.log("log", f"gemini request failed: {ex}")
+            if attempt >= retries:
+                break
+            delay = base_delay * (2**attempt)
+            mt_state.log.log(
+                "log",
+                f"gemini retry in {delay:.1f}s (attempt {attempt + 1}/{retries})",
+            )
+            if delay > 0:
+                time.sleep(delay)
+        mt_state.log.log("log", "gemini failed; falling back to llama")
 
     return _call_llama(messages, system_prompt=system_prompt).strip(), "llama"
 
@@ -580,6 +595,8 @@ def complete_weather_narrative(
     *,
     is_direct_message: bool = False,
     extra_system_instruction: Optional[str] = None,
+    gemini_max_retries: int = 0,
+    gemini_retry_initial_delay_sec: float = 15.0,
 ) -> Tuple[str, Literal["gemini", "llama"]]:
     """One-shot forecast text; uses dedicated system prompt (not mesh persona + full weather system block)."""
     llama_prompt = config.LLAMA_WEATHER_NARRATIVE_SYSTEM_PROMPT
@@ -593,6 +610,8 @@ def complete_weather_narrative(
         is_direct_message=is_direct_message,
         system_prompt=llama_prompt,
         gemini_system_prompt=gemini_prompt,
+        gemini_max_retries=gemini_max_retries,
+        gemini_retry_initial_delay_sec=gemini_retry_initial_delay_sec,
     )
 
 
