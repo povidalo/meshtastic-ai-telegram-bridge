@@ -386,7 +386,12 @@ def _morning_job() -> None:
             return
     facts = format_weather_facts_for_narrative(include_fact=True)
     try:
-        narrative, prov = complete_weather_narrative(facts)
+        narrative, prov = complete_weather_narrative(
+            facts,
+            extra_system_instruction=(
+                "Это утренний плановый прогноз. Начни ответ с короткого пожелания доброго утра."
+            ),
+        )
     except Exception as ex:
         mt_state.log.log("log", f"weather narrative LLM failed: {ex}")
         return

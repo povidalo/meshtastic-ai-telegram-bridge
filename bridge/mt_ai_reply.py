@@ -576,14 +576,23 @@ def _call_ai_with_routing(
 
 
 def complete_weather_narrative(
-    facts_block: str, *, is_direct_message: bool = False
+    facts_block: str,
+    *,
+    is_direct_message: bool = False,
+    extra_system_instruction: Optional[str] = None,
 ) -> Tuple[str, Literal["gemini", "llama"]]:
     """One-shot forecast text; uses dedicated system prompt (not mesh persona + full weather system block)."""
+    llama_prompt = config.LLAMA_WEATHER_NARRATIVE_SYSTEM_PROMPT
+    gemini_prompt = config.GEMINI_WEATHER_NARRATIVE_SYSTEM_PROMPT
+    extra = (extra_system_instruction or "").strip()
+    if extra:
+        llama_prompt = f"{llama_prompt}\n{extra}"
+        gemini_prompt = f"{gemini_prompt}\n{extra}"
     return _call_ai_with_routing(
         [{"role": "user", "content": facts_block}],
         is_direct_message=is_direct_message,
-        system_prompt=config.LLAMA_WEATHER_NARRATIVE_SYSTEM_PROMPT,
-        gemini_system_prompt=config.GEMINI_WEATHER_NARRATIVE_SYSTEM_PROMPT,
+        system_prompt=llama_prompt,
+        gemini_system_prompt=gemini_prompt,
     )
 
 
