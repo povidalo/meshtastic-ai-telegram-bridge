@@ -373,8 +373,8 @@ def _broadcast_weather_narrative(text: str) -> None:
 
 def _morning_job() -> None:
     refresh_if_stale()
-    from mt_ai_reply import complete_weather_narrative
-    from mt_telegram import mesh_auto_reply_source_caption
+    from .mt_ai_reply import complete_weather_narrative
+    from .mt_telegram import mesh_auto_reply_source_caption
 
     with _state_lock:
         if _raw is None:
