@@ -547,6 +547,61 @@ def _call_gemini(
     return "".join(chunks).strip()
 
 
+def _summarize_request_exception(ex: Exception) -> str:
+    """Extract concise HTTP/API details from requests exceptions for logs."""
+    if not isinstance(ex, requests.RequestException):
+        return str(ex)
+
+    base = str(ex).strip()
+    response = getattr(ex, "response", None)
+    if response is None:
+        return base or ex.__class__.__name__
+
+    status_code = getattr(response, "status_code", None)
+    reason = getattr(response, "reason", None)
+    parts: List[str] = []
+    if status_code is not None:
+        parts.append(f"status={status_code}")
+    if reason:
+        parts.append(f"reason={reason}")
+
+    api_status: Optional[str] = None
+    api_message: Optional[str] = None
+    response_text: Optional[str] = None
+
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+
+    if isinstance(payload, dict):
+        err = payload.get("error")
+        if isinstance(err, dict):
+            raw_status = err.get("status")
+            if raw_status is not None:
+                api_status = str(raw_status).strip() or None
+            raw_message = err.get("message")
+            if raw_message is not None:
+                api_message = str(raw_message).strip() or None
+        if api_status:
+            parts.append(f"api_status={api_status}")
+        if api_message:
+            parts.append(f"api_message={api_message}")
+    else:
+        txt = getattr(response, "text", "")
+        if txt:
+            response_text = txt.strip()
+
+    details = ", ".join(parts)
+    if details:
+        return details
+    if response_text:
+        if len(response_text) > 400:
+            response_text = response_text[:400] + "…[truncated]"
+        return f"response_body={response_text}"
+    return base or ex.__class__.__name__
+
+
 def _use_gemini_for_request(*, is_direct_message: bool) -> bool:
     if not is_direct_message:
         return True
@@ -575,7 +630,10 @@ def _call_ai_with_routing(
                     return reply, "gemini"
                 mt_state.log.log("log", "gemini returned empty reply")
             except Exception as ex:
-                mt_state.log.log("log", f"gemini request failed: {ex}")
+                mt_state.log.log(
+                    "log",
+                    f"gemini request failed: {_summarize_request_exception(ex)}",
+                )
             if attempt >= retries:
                 break
             delay = base_delay * (2**attempt)
