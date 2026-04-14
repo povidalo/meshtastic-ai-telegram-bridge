@@ -56,7 +56,11 @@ LLAMA_READ_TIMEOUT_SEC = 600.0  # Seconds to wait for the full response body (sl
 # --- Google Gemini (cloud; preferred for broadcast, optional for DMs) ---
 GEMINI_API_KEY = ""  # REDACTED — Google AI API key for Gemini.
 GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"  # REST base for generateContent.
-GEMINI_MODEL = "gemini-3.1-flash-lite-preview"  # Model id for generateContent requests.
+GEMINI_MODEL: list[str] = [  # Ordered fallback chain for generateContent requests.
+    "gemini-3.1-flash-lite-preview",
+    "gemini-2.5-flash-lite",
+    "gemma-4-31b-it",
+]
 GEMINI_CONNECT_TIMEOUT_SEC = 30.0  # HTTP connect timeout for Gemini.
 GEMINI_READ_TIMEOUT_SEC = 120.0  # HTTP read timeout for Gemini responses.
 

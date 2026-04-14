@@ -481,6 +481,7 @@ def _gemini_contents_from_messages(messages: List[dict]) -> List[dict]:
 def _call_gemini(
     messages: List[dict],
     *,
+    model_name: str,
     system_prompt: Optional[str] = None,
 ) -> str:
     sys_content = (
@@ -489,7 +490,7 @@ def _call_gemini(
         else system_prompt
     )
     url = (
-        f"{config.GEMINI_API_BASE_URL.rstrip('/')}/models/{config.GEMINI_MODEL}"
+        f"{config.GEMINI_API_BASE_URL.rstrip('/')}/models/{model_name}"
         f":generateContent?key={config.GEMINI_API_KEY}"
     )
     payload = {
@@ -499,7 +500,7 @@ def _call_gemini(
 
     mt_state.log.log(
         "log",
-        f"gemini request start url={url.split('?')[0]} model={config.GEMINI_MODEL}",
+        f"gemini request start url={url.split('?')[0]} model={model_name}",
     )
     try:
         body_dump = json.dumps(payload, ensure_ascii=False, indent=2)
@@ -602,6 +603,25 @@ def _summarize_request_exception(ex: Exception) -> str:
     return base or ex.__class__.__name__
 
 
+def _is_network_failure_exception(ex: Exception) -> bool:
+    """True when requests failed before receiving an HTTP response."""
+    if not isinstance(ex, requests.RequestException):
+        return False
+    return getattr(ex, "response", None) is None
+
+
+def _gemini_model_candidates() -> List[str]:
+    """Normalize GEMINI_MODEL config into an ordered non-empty model list."""
+    raw = getattr(config, "GEMINI_MODEL", None)
+    if isinstance(raw, str):
+        model = raw.strip()
+        return [model] if model else []
+    if isinstance(raw, (list, tuple)):
+        models = [str(item).strip() for item in raw if str(item).strip()]
+        return models
+    return []
+
+
 def _use_gemini_for_request(*, is_direct_message: bool) -> bool:
     if not is_direct_message:
         return True
@@ -623,16 +643,35 @@ def _call_ai_with_routing(
     if use_gemini:
         retries = max(0, int(gemini_max_retries))
         base_delay = max(0.0, float(gemini_retry_initial_delay_sec))
+        gemini_models = _gemini_model_candidates()
+        if not gemini_models:
+            mt_state.log.log("log", "gemini disabled: GEMINI_MODEL has no usable values")
         for attempt in range(retries + 1):
-            try:
-                reply = _call_gemini(messages, system_prompt=gemini_sys).strip()
-                if reply:
-                    return reply, "gemini"
-                mt_state.log.log("log", "gemini returned empty reply")
-            except Exception as ex:
+            network_failure_this_attempt = False
+            for model_name in gemini_models:
+                try:
+                    reply = _call_gemini(
+                        messages, model_name=model_name, system_prompt=gemini_sys
+                    ).strip()
+                    if reply:
+                        return reply, "gemini"
+                    mt_state.log.log(
+                        "log",
+                        f"gemini returned empty reply for model={model_name}",
+                    )
+                except Exception as ex:
+                    mt_state.log.log(
+                        "log",
+                        "gemini request failed for "
+                        f"model={model_name}: {_summarize_request_exception(ex)}",
+                    )
+                    if _is_network_failure_exception(ex):
+                        network_failure_this_attempt = True
+                        break
+            if network_failure_this_attempt:
                 mt_state.log.log(
                     "log",
-                    f"gemini request failed: {_summarize_request_exception(ex)}",
+                    "gemini network failure detected; skipping model cycling this attempt",
                 )
             if attempt >= retries:
                 break
