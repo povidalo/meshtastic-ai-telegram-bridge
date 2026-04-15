@@ -18,16 +18,16 @@ import config
 from . import mt_state
 from .mt_mesh_send import send_mesh_text
 
-_MSK = ZoneInfo(config.WEATHER_TZ)
+_TZ = ZoneInfo(config.WEATHER_TZ)
 _state_lock = threading.Lock()
 _raw: Optional[Dict[str, Any]] = None
 _fetched_at: Optional[datetime] = None
 
 _PART_ORDER: tuple[tuple[str, str], ...] = (
-    ("night", "ночь"),
     ("morning", "утро"),
     ("day", "день"),
     ("evening", "вечер"),
+    ("night", "ночь"),
 )
 
 
@@ -116,11 +116,10 @@ def _format_part_block(label_ru: str, part: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _today_parts(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _parts_for_date(raw: Dict[str, Any], target_date: date) -> Optional[Dict[str, Any]]:
     forecasts = raw.get("forecasts")
     if not isinstance(forecasts, list) or not forecasts:
         return None
-    today = datetime.now(_MSK).date()
     for day in forecasts:
         if not isinstance(day, dict):
             continue
@@ -130,11 +129,8 @@ def _today_parts(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 d = date.fromisoformat(ds)
             except ValueError:
                 continue
-            if d == today:
+            if d == target_date:
                 return day.get("parts") if isinstance(day.get("parts"), dict) else None
-    first = forecasts[0]
-    if isinstance(first, dict) and isinstance(first.get("parts"), dict):
-        return first["parts"]
     return None
 
 
@@ -152,10 +148,11 @@ def _format_fact_block(raw: Dict[str, Any]) -> str:
 
 
 def _build_human_block(raw: Dict[str, Any], when: datetime, *, include_fact: bool) -> str:
-    d_msk = when.astimezone(_MSK).date()
+    d_msk = when.astimezone(_TZ).date()
+    d_next = d_msk + timedelta(days=1)
     season = _season_name_ru(d_msk)
     header = (
-        f"Погода (Дубна, данные Яндекс; дата по Москве: {d_msk.isoformat()}, "
+        f"Прогноз погоды (дата: {d_msk.isoformat()}, "
         f"время года: {season}):"
     )
     body_parts: List[str] = [header]
@@ -163,11 +160,18 @@ def _build_human_block(raw: Dict[str, Any], when: datetime, *, include_fact: boo
         fb = _format_fact_block(raw)
         if fb:
             body_parts.append(fb)
-    parts = _today_parts(raw)
-    if parts:
-        body_parts.append("Сегодня по частям суток:")
+    today_parts = _parts_for_date(raw, d_msk)
+    if today_parts:
+        body_parts.append("На сегодня:")
         for key, label in _PART_ORDER:
-            p = parts.get(key)
+            p = today_parts.get(key)
+            if isinstance(p, dict):
+                body_parts.append(_format_part_block(label, p))
+    tomorrow_parts = _parts_for_date(raw, d_next)
+    if tomorrow_parts:
+        body_parts.append("На завтра:")
+        for key, label in _PART_ORDER:
+            p = tomorrow_parts.get(key)
             if isinstance(p, dict):
                 body_parts.append(_format_part_block(label, p))
     if len(body_parts) == 1:
@@ -186,10 +190,10 @@ def format_weather_for_system_prompt() -> str:
         fetched = _fetched_at
     if not raw:
         return "Погода: данные пока недоступны (кэш пуст или ошибка загрузки)."
-    when = fetched or datetime.now(_MSK)
+    when = fetched or datetime.now(_TZ)
     block = _build_human_block(raw, when, include_fact=True)
     if fetched:
-        block += f"\n(данные получены: {fetched.astimezone(_MSK).strftime('%Y-%m-%d %H:%M %Z')})"
+        block += f"\n(данные получены: {fetched.astimezone(_TZ).strftime('%Y-%m-%d %H:%M %Z')})"
     return block
 
 
@@ -200,10 +204,10 @@ def format_weather_facts_for_narrative(*, include_fact: bool = False) -> str:
         fetched = _fetched_at
     if not raw:
         return "Погода: данные пока недоступны (кэш пуст или ошибка загрузки)."
-    when = fetched or datetime.now(_MSK)
+    when = fetched or datetime.now(_TZ)
     block = _build_human_block(raw, when, include_fact=include_fact)
     if fetched:
-        block += f"\n(данные получены: {fetched.astimezone(_MSK).strftime('%Y-%m-%d %H:%M %Z')})"
+        block += f"\n(данные получены: {fetched.astimezone(_TZ).strftime('%Y-%m-%d %H:%M %Z')})"
     return block
 
 
@@ -247,7 +251,7 @@ def load_cache_from_disk() -> bool:
         return False
     fetched = _parse_iso_dt(data.get("fetched_at")) if data.get("fetched_at") else None
     if fetched is not None and fetched.tzinfo is None:
-        fetched = fetched.replace(tzinfo=_MSK)
+        fetched = fetched.replace(tzinfo=_TZ)
     with _state_lock:
         _raw = raw
         _fetched_at = fetched
@@ -257,9 +261,9 @@ def load_cache_from_disk() -> bool:
 def _is_stale(fetched: Optional[datetime]) -> bool:
     if fetched is None:
         return True
-    now = datetime.now(fetched.tzinfo or _MSK)
+    now = datetime.now(fetched.tzinfo or _TZ)
     if fetched.tzinfo is None:
-        fetched = fetched.replace(tzinfo=_MSK)
+        fetched = fetched.replace(tzinfo=_TZ)
     return now - fetched >= timedelta(hours=config.WEATHER_STALE_HOURS)
 
 
@@ -319,7 +323,7 @@ def fetch_from_api() -> Optional[Dict[str, Any]]:
 
 def apply_fresh_payload(raw: Dict[str, Any], when: Optional[datetime] = None) -> None:
     global _raw, _fetched_at
-    ts = when or datetime.now(_MSK)
+    ts = when or datetime.now(_TZ)
     with _state_lock:
         _raw = raw
         _fetched_at = ts
@@ -362,14 +366,14 @@ def _weather_schedule_target(now: datetime) -> datetime:
 
 def _weather_schedule_time_label() -> str:
     """Human-readable slot for logs/Telegram (e.g. 07:00 MSK)."""
-    now = datetime.now(_MSK)
+    now = datetime.now(_TZ)
     h = int(config.WEATHER_SCHEDULE_HOUR)
     m = int(config.WEATHER_SCHEDULE_MINUTE)
     return now.replace(hour=h, minute=m, second=0, microsecond=0).strftime("%H:%M %Z")
 
 
 def _seconds_until_scheduled_weather_msk() -> tuple[float, datetime]:
-    now = datetime.now(_MSK)
+    now = datetime.now(_TZ)
     target = _weather_schedule_target(now)
     return max(0.0, (target - now).total_seconds()), target
 
