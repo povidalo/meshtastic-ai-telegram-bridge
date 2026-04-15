@@ -5,6 +5,7 @@ from typing import Any
 import config
 
 from . import mt_state
+from . import mt_stats
 from .mt_ai_reply import (
     maybe_automated_pong,
     maybe_automated_weather_forecast,
@@ -40,6 +41,21 @@ def on_mesh_text_receive(packet: dict[str, Any], interface: Any) -> None:
     details = packet_to_details(packet, interface)
     if details is None:
         return
+    is_self_message = False
+    if interface.myInfo is not None:
+        try:
+            is_self_message = details.sender_node_id == int(interface.myInfo.my_node_num)
+        except (TypeError, ValueError):
+            is_self_message = False
+
+    if not is_self_message:
+        try:
+            mt_stats.record_received_message(
+                sender_node_id=details.sender_node_id,
+                message=details.message,
+            )
+        except Exception as ex:
+            mt_state.log.log("log", f"stats record received failed: {ex}")
 
     try:
         mt_state.notifier.send(

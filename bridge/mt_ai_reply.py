@@ -20,6 +20,7 @@ from meshtastic import BROADCAST_ADDR
 import config
 
 from . import mt_state
+from . import mt_stats
 from . import mt_weather
 from .mt_mesh_send import send_mesh_text
 from .mt_packets import MeshMessageDetails, origin_of_mesh_text_packet
@@ -359,12 +360,14 @@ def _format_msk_now() -> str:
 
 def _build_system_prompt(*, use_gemini_prompt: bool) -> str:
     wx = mt_weather.format_weather_for_system_prompt()
+    stats = mt_stats.prompt_summary_block()
     base_prompt = (
         config.GEMINI_SYSTEM_PROMPT if use_gemini_prompt else config.LLAMA_SYSTEM_PROMPT
     )
     return (
         f"{base_prompt}\n\n"
         f"{wx}\n\n"
+        f"{stats}\n\n"
         f"Время сейчас в Дубне: {_format_msk_now()}."
     )
 

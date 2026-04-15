@@ -10,6 +10,7 @@ from meshtastic.protobuf import portnums_pb2
 import config
 
 from . import mt_state
+from . import mt_stats
 from .mt_mesh_split import prepare_mesh_send_chunks
 from .mt_packets import remember_mesh_text_packet_origin
 
@@ -172,6 +173,7 @@ def send_mesh_text(
         return None
 
     result: Any = None
+    had_routing_ack = False
     n = len(chunks)
     for i, chunk in enumerate(chunks):
         part_rid = reply_id if i == 0 else None
@@ -238,6 +240,7 @@ def send_mesh_text(
                     f"reply_id={rid_s} {pki_s} want_ack=True packet_id={pkt_id} routing_ack=ok "
                     f"text={preview!r}",
                 )
+                had_routing_ack = True
                 if (
                     pkt_id is not None
                     and destination_id == BROADCAST_ADDR
@@ -266,4 +269,9 @@ def send_mesh_text(
                 time.sleep(backoff)
         if i < n - 1 and n > 1 and config.MESH_MULTI_PART_DELAY_SEC > 0:
             time.sleep(config.MESH_MULTI_PART_DELAY_SEC)
+    if had_routing_ack:
+        try:
+            mt_stats.record_sent_message()
+        except Exception as ex:
+            mt_state.log.log("log", f"stats record sent failed: {ex}")
     return result
