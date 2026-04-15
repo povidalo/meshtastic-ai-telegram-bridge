@@ -339,6 +339,53 @@ def _context_key_from_details(d: MeshMessageDetails) -> AiContextKey:
     return AiContextKey(channel_index=d.channel_index, dm_peer=None)
 
 
+def _context_key_from_outgoing(
+    channel_index: int, destination_id: Union[int, str]
+) -> AiContextKey:
+    if destination_id == BROADCAST_ADDR:
+        return AiContextKey(channel_index=channel_index, dm_peer=None)
+    if isinstance(destination_id, str):
+        s = destination_id.strip().lstrip("!").lower()
+        if s in ("ffffffff", "4294967295"):
+            return AiContextKey(channel_index=channel_index, dm_peer=None)
+    try:
+        peer = int(destination_id)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return AiContextKey(channel_index=channel_index, dm_peer=None)
+    if peer in (0xFFFFFFFF, -1):
+        return AiContextKey(channel_index=channel_index, dm_peer=None)
+    return AiContextKey(channel_index=channel_index, dm_peer=peer)
+
+
+def record_mesh_context_incoming(details: MeshMessageDetails) -> None:
+    """Append a mesh-received line to persisted context (all traffic, not only AI)."""
+    line = _format_user_message(details)
+    if not line.strip():
+        return
+    key = _context_key_from_details(details)
+    ctx = _get_or_create_context(key)
+    with ctx.lock:
+        ctx.messages.append({"role": "user", "content": line})
+    _persist_context_cache()
+
+
+def record_mesh_context_outgoing(
+    *,
+    channel_index: int,
+    destination_id: Union[int, str],
+    full_text: str,
+) -> None:
+    """Append a mesh-sent line to persisted context after a successful full send."""
+    body = (full_text or "").strip()
+    if not body:
+        return
+    key = _context_key_from_outgoing(channel_index, destination_id)
+    ctx = _get_or_create_context(key)
+    with ctx.lock:
+        ctx.messages.append({"role": "assistant", "content": body})
+    _persist_context_cache()
+
+
 def _get_or_create_context(key: AiContextKey) -> _AiContext:
     with _contexts_guard:
         ctx = _contexts.get(key)
@@ -357,7 +404,6 @@ def _invalidate_broadcast_ai_for_side_thread(channel_index: int) -> None:
         return
     with ctx.lock:
         ctx.generation += 1
-        ctx.messages.clear()
         ctx.latest_spec = None
     _persist_context_cache()
 
@@ -929,8 +975,6 @@ def _process_loop(key: AiContextKey) -> None:
                     if ctx.wake_again:
                         continue
                     break
-                ctx.messages.append({"role": "assistant", "content": reply_text})
-            _persist_context_cache()
 
             if config.TELEGRAM_NOTIFY_MESH_AUTO_REPLY and sent_pkt is not None:
                 out_id = getattr(sent_pkt, "id", None)
@@ -1030,11 +1074,9 @@ def schedule_ai_reply(details: MeshMessageDetails, interface: Any) -> None:
         pki_encrypted=use_pki,
         details=details,
     )
-    user_line = _format_user_message(details)
 
     ctx = _get_or_create_context(key)
     with ctx.lock:
-        ctx.messages.append({"role": "user", "content": user_line})
         ctx.generation += 1
         ctx.latest_spec = spec
         if ctx.busy:

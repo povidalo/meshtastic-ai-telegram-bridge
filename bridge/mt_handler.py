@@ -9,6 +9,7 @@ from . import mt_stats
 from .mt_ai_reply import (
     maybe_automated_pong,
     maybe_automated_weather_forecast,
+    record_mesh_context_incoming,
     schedule_ai_reply,
 )
 from .mt_emoji import is_ignored_mesh_noise_packet
@@ -49,6 +50,10 @@ def on_mesh_text_receive(packet: dict[str, Any], interface: Any) -> None:
             is_self_message = False
 
     if not is_self_message:
+        try:
+            record_mesh_context_incoming(details)
+        except Exception as ex:
+            mt_state.log.log("log", f"mesh context incoming record failed: {ex}")
         try:
             mt_stats.record_received_message(
                 sender_node_id=details.sender_node_id,

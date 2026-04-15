@@ -181,7 +181,9 @@ def send_mesh_text(
     result: Any = None
     had_routing_ack = False
     n = len(chunks)
+    parts_ok = 0
     for i, chunk in enumerate(chunks):
+        chunk_ok = False
         part_rid = reply_id if i == 0 else None
         rid_s = str(part_rid) if part_rid is not None else "none"
         preview = chunk if len(chunk) <= 120 else chunk[:117] + "..."
@@ -247,6 +249,7 @@ def send_mesh_text(
                     f"text={preview!r}",
                 )
                 had_routing_ack = True
+                chunk_ok = True
                 if (
                     pkt_id is not None
                     and destination_id == BROADCAST_ADDR
@@ -273,6 +276,8 @@ def send_mesh_text(
                     f"mesh send part {i + 1}/{n} attempt {attempt + 1} error, retrying in {backoff:.1f}s: {ex}",
                 )
                 time.sleep(backoff)
+        if chunk_ok:
+            parts_ok += 1
         if i < n - 1 and n > 1 and config.MESH_MULTI_PART_DELAY_SEC > 0:
             time.sleep(config.MESH_MULTI_PART_DELAY_SEC)
     if had_routing_ack:
@@ -280,4 +285,17 @@ def send_mesh_text(
             mt_stats.record_sent_message()
         except Exception as ex:
             mt_state.log.log("log", f"stats record sent failed: {ex}")
+    if parts_ok == n and n > 0:
+        assembled = "".join(chunks)
+        if assembled.strip():
+            try:
+                from . import mt_ai_reply as _mt_ai_reply
+
+                _mt_ai_reply.record_mesh_context_outgoing(
+                    channel_index=channel_index,
+                    destination_id=destination_id,
+                    full_text=assembled,
+                )
+            except Exception as ex:
+                mt_state.log.log("log", f"mesh context outgoing record failed: {ex}")
     return result
