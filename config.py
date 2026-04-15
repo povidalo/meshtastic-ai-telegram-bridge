@@ -18,6 +18,8 @@ WEATHER_CACHE_FILE = _CONFIG_DIR / "weather_cache.json"  # On-disk cache for API
 MESH_PACKET_ORIGIN_CACHE_FILE = _CONFIG_DIR / "mesh_packet_origin_cache.json"
 # Persistent counters for bridge traffic stats used in AI prompt context.
 BRIDGE_STATS_CACHE_FILE = _CONFIG_DIR / "bridge_stats_cache.json"
+# Persistent per-channel AI context messages (broadcast + DM threads).
+AI_CONTEXT_CACHE_FILE = _CONFIG_DIR / "context.json"
 WEATHER_STALE_HOURS = 24  # Refetch forecast when cached data is older than this many hours.
 WEATHER_BROADCAST_CHANNEL_INDEX = 0  # Primary channel index for scheduled weather broadcasts.
 WEATHER_TZ = "Europe/Moscow"  # Time zone name for interpreting “today” and local times in weather logic.

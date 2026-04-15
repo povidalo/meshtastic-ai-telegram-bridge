@@ -27,6 +27,16 @@ from .mt_packets import MeshMessageDetails, origin_of_mesh_text_packet
 from .mt_telegram import MeshAutoReplySource, format_telegram_mesh_auto_reply
 
 
+def _context_messages_maxlen() -> int:
+    # Keep up to N user+assistant turns in memory/cache as requested.
+    return max(1, int(config.AI_CONTEXT_MAX_MESSAGES) * 2)
+
+
+def _ai_messages_maxlen() -> int:
+    # Cap the request context sent to AI to exactly AI_CONTEXT_MAX_MESSAGES.
+    return max(1, int(config.AI_CONTEXT_MAX_MESSAGES))
+
+
 @dataclass(frozen=True)
 class AiContextKey:
     """Broadcast: dm_peer is None. DM: dm_peer is the remote sender node id."""
@@ -54,7 +64,7 @@ class _AiContext:
     latest_spec: Optional[_LatestReplySpec] = None
 
     def __post_init__(self) -> None:
-        maxlen = max(1, int(config.AI_CONTEXT_MAX_MESSAGES))
+        maxlen = _context_messages_maxlen()
         self.messages = deque(maxlen=maxlen)
 
 
@@ -349,6 +359,7 @@ def _invalidate_broadcast_ai_for_side_thread(channel_index: int) -> None:
         ctx.generation += 1
         ctx.messages.clear()
         ctx.latest_spec = None
+    _persist_context_cache()
 
 
 _MSK = ZoneInfo("Europe/Moscow")
@@ -370,6 +381,113 @@ def _build_system_prompt(*, use_gemini_prompt: bool) -> str:
         f"{stats}\n\n"
         f"Время сейчас в Дубне: {_format_msk_now()}."
     )
+
+
+def _context_cache_payload() -> Dict[str, Any]:
+    rows: List[Dict[str, Any]] = []
+    with _contexts_guard:
+        items = list(_contexts.items())
+    for key, ctx in items:
+        with ctx.lock:
+            msgs: List[Dict[str, str]] = []
+            for msg in ctx.messages:
+                if not isinstance(msg, dict):
+                    continue
+                role = str(msg.get("role", "user")).strip() or "user"
+                content = msg.get("content")
+                if content is None:
+                    continue
+                text = str(content)
+                if not text.strip():
+                    continue
+                msgs.append({"role": role, "content": text})
+        if not msgs:
+            continue
+        rows.append(
+            {
+                "channel_index": key.channel_index,
+                "dm_peer": key.dm_peer,
+                "messages": msgs[-_context_messages_maxlen() :],
+            }
+        )
+    return {"contexts": rows}
+
+
+def _write_context_cache_file() -> None:
+    path = config.AI_CONTEXT_CACHE_FILE
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    data = _context_cache_payload()
+    try:
+        tmp.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        tmp.replace(path)
+    except OSError as ex:
+        mt_state.log.log("log", f"ai context cache write failed: {ex}")
+
+
+def _persist_context_cache() -> None:
+    _write_context_cache_file()
+
+
+def load_context_cache_from_disk() -> bool:
+    """Load per-channel/thread AI context cache if present."""
+    path = config.AI_CONTEXT_CACHE_FILE
+    if not path.is_file():
+        return False
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as ex:
+        mt_state.log.log("log", f"ai context cache read failed: {ex}")
+        return False
+    if not isinstance(data, dict):
+        return False
+    rows = data.get("contexts")
+    if not isinstance(rows, list):
+        return False
+
+    loaded: Dict[AiContextKey, _AiContext] = {}
+    maxlen = _context_messages_maxlen()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        raw_channel = row.get("channel_index")
+        try:
+            channel_index = int(raw_channel)
+        except (TypeError, ValueError):
+            continue
+        raw_dm_peer = row.get("dm_peer")
+        dm_peer: Optional[int]
+        if raw_dm_peer is None:
+            dm_peer = None
+        else:
+            try:
+                dm_peer = int(raw_dm_peer)
+            except (TypeError, ValueError):
+                continue
+        key = AiContextKey(channel_index=channel_index, dm_peer=dm_peer)
+        ctx = _AiContext()
+        msgs_raw = row.get("messages")
+        if isinstance(msgs_raw, list):
+            for msg in msgs_raw[-maxlen:]:
+                if not isinstance(msg, dict):
+                    continue
+                content = msg.get("content")
+                if content is None:
+                    continue
+                text = str(content)
+                if not text.strip():
+                    continue
+                role = str(msg.get("role", "user")).strip() or "user"
+                ctx.messages.append({"role": role, "content": text})
+        if ctx.messages:
+            loaded[key] = ctx
+
+    with _contexts_guard:
+        _contexts.clear()
+        _contexts.update(loaded)
+    return True
 
 
 def _implied_mqtt_path(d: MeshMessageDetails) -> bool:
@@ -729,7 +847,7 @@ def _process_loop(key: AiContextKey) -> None:
             with ctx.lock:
                 ctx.wake_again = False
                 gen_snapshot = ctx.generation
-                msgs = list(ctx.messages)
+                msgs = list(ctx.messages)[-_ai_messages_maxlen() :]
                 spec = ctx.latest_spec
 
             if spec is None:
@@ -812,6 +930,7 @@ def _process_loop(key: AiContextKey) -> None:
                         continue
                     break
                 ctx.messages.append({"role": "assistant", "content": reply_text})
+            _persist_context_cache()
 
             if config.TELEGRAM_NOTIFY_MESH_AUTO_REPLY and sent_pkt is not None:
                 out_id = getattr(sent_pkt, "id", None)
@@ -920,7 +1039,9 @@ def schedule_ai_reply(details: MeshMessageDetails, interface: Any) -> None:
         ctx.latest_spec = spec
         if ctx.busy:
             ctx.wake_again = True
+            _persist_context_cache()
             return
         ctx.busy = True
 
+    _persist_context_cache()
     _executor.submit(_process_loop, key)
