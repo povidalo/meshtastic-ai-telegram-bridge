@@ -274,6 +274,8 @@ def maybe_automated_weather_forecast(details: MeshMessageDetails, interface: Any
         narrative, prov = complete_weather_narrative(
             mt_weather.format_weather_facts_for_narrative(),
             is_direct_message=details.is_direct_message,
+            gemini_max_retries=3,
+            gemini_retry_initial_delay_sec=10.0,
         )
         weather_source = prov
     except Exception as ex:
@@ -737,6 +739,8 @@ def _process_loop(key: AiContextKey) -> None:
                 reply_text, reply_source = _call_ai_with_routing(
                     msgs,
                     is_direct_message=spec.details.is_direct_message,
+                    gemini_max_retries=3,
+                    gemini_retry_initial_delay_sec=10.0,
                 )
             except Exception as ex:
                 mt_state.log.log("log", f"ai chat failed: {ex}")
