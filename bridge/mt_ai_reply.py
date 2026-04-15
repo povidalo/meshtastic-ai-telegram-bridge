@@ -1019,7 +1019,6 @@ def schedule_ai_reply(details: MeshMessageDetails, interface: Any) -> None:
                     "log",
                     "broadcast AI skipped: no reply thread and no direct mention",
                 )
-                _invalidate_broadcast_ai_for_side_thread(details.channel_index)
                 return
         else:
             parent_sender = origin_of_mesh_text_packet(details.reply_to_packet_id)
@@ -1055,8 +1054,8 @@ def schedule_ai_reply(details: MeshMessageDetails, interface: Any) -> None:
                         "broadcast AI skipped: threaded reply targets another node's message "
                         f"(parent_node={parent_sender}, us={my_num}); no direct mention",
                     )
-                _invalidate_broadcast_ai_for_side_thread(details.channel_index)
                 return
+        _invalidate_broadcast_ai_for_side_thread(details.channel_index)
 
     key = _context_key_from_details(details)
     rid = details.mesh_packet_id if config.AUTO_REPLY_USE_THREAD else None
