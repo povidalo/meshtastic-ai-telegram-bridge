@@ -168,8 +168,14 @@ def send_mesh_text(
             f"(max {config.MESH_TEXT_MAX_PAYLOAD_BYTES} UTF-8 bytes each) dest={dest_s} {pki_s}",
         )
         return None
+    # Normalize each chunk right before dispatch: trim leading/trailing spaces/newlines
+    # and drop chunks that become empty after trimming.
+    chunks = [chunk.strip() for chunk in chunks if chunk.strip()]
     if not chunks:
-        mt_state.log.log("log", f"mesh send ignored: empty message dest={dest_s} {pki_s}")
+        mt_state.log.log(
+            "log",
+            f"mesh send ignored: empty message after trim dest={dest_s} {pki_s}",
+        )
         return None
 
     result: Any = None
