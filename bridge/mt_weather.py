@@ -295,6 +295,11 @@ def fetch_from_api() -> Optional[Dict[str, Any]]:
             if "message" in data and "forecasts" not in data and "fact" not in data:
                 mt_state.log.log("log", f"yandex weather error payload: {data!r}")
                 return None
+            try:
+                payload_dump = json.dumps(data, ensure_ascii=False, indent=2)
+            except (TypeError, ValueError):
+                payload_dump = repr(data)
+            mt_state.log.log("log", f"yandex weather received payload:\n{payload_dump}")
             return data
         except Exception as ex:
             mt_state.log.log(
