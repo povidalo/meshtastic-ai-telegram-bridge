@@ -69,6 +69,12 @@ def _cloudness_ru(value: Any) -> str:
     return "пасмурно"
 
 
+def _condition_as_is(value: Any) -> str:
+    if value is None:
+        return "н/д"
+    return str(value)
+
+
 def _temp_line(part: Dict[str, Any]) -> str:
     t_min = part.get("temp_min")
     t_max = part.get("temp_max")
@@ -110,7 +116,8 @@ def _wind_line(part: Dict[str, Any]) -> str:
 def _format_part_block(label_ru: str, part: Dict[str, Any]) -> str:
     lines = [
         f"— {label_ru}: {_temp_line(part)}",
-        f"  облачность/условие: {_cloudness_ru(part.get('cloudness'))}",
+        f"  облачность: {_cloudness_ru(part.get('cloudness'))}",
+        f"  условие: {_condition_as_is(part.get('condition'))}",
         f"  {_wind_line(part)}",
     ]
     return "\n".join(lines)
@@ -141,7 +148,8 @@ def _format_fact_block(raw: Dict[str, Any]) -> str:
     lines = [
         "Сейчас (факт):",
         f"  {_temp_line(fact)}",
-        f"  облачность/условие: {_cloudness_ru(fact.get('cloudness'))}",
+        f"  облачность: {_cloudness_ru(fact.get('cloudness'))}",
+        f"  условие: {_condition_as_is(fact.get('condition'))}",
         f"  {_wind_line(fact)}",
     ]
     return "\n".join(lines).strip()
