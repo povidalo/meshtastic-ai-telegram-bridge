@@ -236,7 +236,7 @@ def maybe_automated_pong(details: MeshMessageDetails, interface: Any) -> bool:
 
 
 def maybe_automated_weather_forecast(details: MeshMessageDetails, interface: Any) -> bool:
-    """Weather keywords: LLM narrative + mesh send (DM or broadcast like pong)."""
+    """Weather keywords: deterministic forecast + short AI preface."""
     if not config.AUTO_REPLY_ENABLED:
         return False
     if _broadcast_automation_blocked_by_side_thread(details, interface):
@@ -281,21 +281,29 @@ def maybe_automated_weather_forecast(details: MeshMessageDetails, interface: Any
         return True
 
     weather_source: MeshAutoReplySource = "automated"
+    forecast = mt_weather.format_mesh_weather_forecast(
+        include_fact=details.is_direct_message
+    )
     try:
-        narrative, prov = complete_weather_narrative(
-            mt_weather.format_weather_facts_for_narrative(),
+        dm_peer = details.sender_node_id if details.is_direct_message else None
+        preface, prov = complete_weather_preface_with_context(
+            forecast,
+            channel_index=details.channel_index,
+            dm_peer=dm_peer,
             is_direct_message=details.is_direct_message,
+            extra_system_instruction=(
+                "Это ответ на ручной запрос прогноза погоды в чате Meshtastic."
+            ),
             gemini_max_retries=3,
             gemini_retry_initial_delay_sec=10.0,
         )
         weather_source = prov
     except Exception as ex:
-        mt_state.log.log("log", f"weather narrative LLM failed: {ex}")
-        narrative = ""
+        mt_state.log.log("log", f"weather preface LLM failed: {ex}")
+        preface = ""
 
-    narrative = (narrative or "").strip()
-    if not narrative:
-        narrative = "Погода: модель не вернула текст."
+    preface = (preface or "").strip()
+    narrative = f"{preface}\n\n{forecast}".strip() if preface else forecast
 
     rid = details.mesh_packet_id if config.AUTO_REPLY_USE_THREAD else None
     if details.is_direct_message:
@@ -856,23 +864,36 @@ def _call_ai_with_routing(
     return _call_llama(messages, system_prompt=system_prompt).strip(), "llama"
 
 
-def complete_weather_narrative(
-    facts_block: str,
+def complete_weather_preface_with_context(
+    forecast_block: str,
     *,
-    is_direct_message: bool = False,
+    channel_index: int,
+    dm_peer: Optional[int],
+    is_direct_message: bool,
     extra_system_instruction: Optional[str] = None,
     gemini_max_retries: int = 0,
     gemini_retry_initial_delay_sec: float = 15.0,
 ) -> Tuple[str, Literal["gemini", "llama"]]:
-    """One-shot forecast text; uses dedicated system prompt (not mesh persona + full weather system block)."""
+    """Generate only a short greeting/comment; deterministic forecast is sent as-is."""
+    key = AiContextKey(channel_index=channel_index, dm_peer=dm_peer)
+    ctx = _get_or_create_context(key)
+    with ctx.lock:
+        history = list(ctx.messages)[-_ai_messages_maxlen() :]
+
     llama_prompt = config.LLAMA_WEATHER_NARRATIVE_SYSTEM_PROMPT
     gemini_prompt = config.GEMINI_WEATHER_NARRATIVE_SYSTEM_PROMPT
+    preface_prompt = (
+        gemini_prompt if _use_gemini_for_request(is_direct_message=is_direct_message) else llama_prompt
+    )
+    prompt_user = f"{preface_prompt}\n\nПрогноз:\n{forecast_block}"
+    messages = [*history, {"role": "user", "content": prompt_user}]
+
     extra = (extra_system_instruction or "").strip()
     if extra:
         llama_prompt = f"{llama_prompt}\n{extra}"
         gemini_prompt = f"{gemini_prompt}\n{extra}"
     return _call_ai_with_routing(
-        [{"role": "user", "content": facts_block}],
+        messages,
         is_direct_message=is_direct_message,
         system_prompt=llama_prompt,
         gemini_system_prompt=gemini_prompt,

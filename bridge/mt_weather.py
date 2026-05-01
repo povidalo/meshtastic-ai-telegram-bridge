@@ -29,6 +29,46 @@ _PART_ORDER: tuple[tuple[str, str], ...] = (
     ("evening", "вечер"),
     ("night", "ночь"),
 )
+_PART_LABEL_TITLE_RU: Dict[str, str] = {
+    "morning": "Утро",
+    "day": "День",
+    "evening": "Вечер",
+    "night": "Ночь",
+}
+_WIND_DIR_ARROW: Dict[str, str] = {
+    "n": "↓",
+    "ne": "↙",
+    "e": "←",
+    "se": "↖",
+    "s": "↑",
+    "sw": "↗",
+    "w": "→",
+    "nw": "↘",
+    "c": "•",
+}
+_CONDITION_EMOJI: Dict[str, str] = {
+    # Yandex Weather API `condition` enum:
+    # https://yandex.ru/dev/weather/doc/en/concepts/forecast-info
+    "clear": "☀️",
+    "partly-cloudy": "🌤️",
+    "cloudy": "⛅",
+    "overcast": "☁️",
+    "drizzle": "🌧️",
+    "light-rain": "🌧️",
+    "rain": "🌧️",
+    "moderate-rain": "☔",
+    "heavy-rain": "☔",
+    "continuous-heavy-rain": "☔",
+    "showers": "🌦️",
+    "wet-snow": "❄️",
+    "light-snow": "❄️",
+    "snow": "❄️",
+    "snow-showers": "❄️",
+    "hail": "⚪️",
+    "thunderstorm": "⚡",
+    "thunderstorm-with-rain": "⚡",
+    "thunderstorm-with-hail": "⚡",
+}
 
 
 def _parse_iso_dt(s: Optional[str]) -> Optional[datetime]:
@@ -73,6 +113,90 @@ def _condition_as_is(value: Any) -> str:
     if value is None:
         return "н/д"
     return str(value)
+
+
+def _fmt_num(value: Any) -> Optional[str]:
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    if abs(v - round(v)) < 1e-9:
+        return str(int(round(v)))
+    s = f"{v:.1f}"
+    return s.rstrip("0").rstrip(".")
+
+
+def _fmt_temp_short(part: Dict[str, Any]) -> str:
+    for key in ("temp_avg", "temp", "temp_max", "temp_min"):
+        v = _fmt_num(part.get(key))
+        if v is not None:
+            sign = "+" if not v.startswith("-") else ""
+            return f"{sign}{v}°C"
+    return "н/д"
+
+
+def _fmt_wind_short(part: Dict[str, Any]) -> str:
+    direction = str(part.get("wind_dir") or "").strip().lower()
+    arrow = _WIND_DIR_ARROW.get(direction, "•")
+    ws_raw = part.get("wind_speed")
+    wg_raw = part.get("wind_gust")
+    ws = _fmt_num(ws_raw)
+    wg = _fmt_num(wg_raw)
+    if ws is None and wg is None:
+        return f"{arrow} н/д"
+    if ws is None:
+        return f"{arrow} {wg}м/с"
+    if wg is None or ws == wg:
+        return f"{arrow} {ws}м/с"
+    return f"{arrow} {ws}-{wg}м/с"
+
+
+def _condition_emoji(part: Dict[str, Any]) -> str:
+    condition = str(part.get("condition") or "").strip().lower()
+    if condition:
+        return _CONDITION_EMOJI.get(condition, "🌡️")
+    cloudness = part.get("cloudness")
+    if isinstance(cloudness, (int, float)):
+        if cloudness <= 0.25:
+            return "☀️"
+        if cloudness <= 0.5:
+            return "🌤️"
+        if cloudness <= 0.75:
+            return "⛅"
+        return "☁️"
+    return "🌡️"
+
+
+def _deterministic_part_line(key: str, part: Dict[str, Any]) -> str:
+    label = _PART_LABEL_TITLE_RU.get(key, key)
+    return f"{label}: {_condition_emoji(part)} {_fmt_temp_short(part)} {_fmt_wind_short(part)}"
+
+
+def format_mesh_weather_forecast(*, include_fact: bool = False) -> str:
+    """Deterministic compact weather block for mesh messages."""
+    with _state_lock:
+        raw = _raw
+        fetched = _fetched_at
+    if not raw:
+        return "Погода: данные пока недоступны."
+    when = fetched or datetime.now(_TZ)
+    d_msk = when.astimezone(_TZ).date()
+    parts = _parts_for_date(raw, d_msk)
+    if not parts:
+        return "Погода: прогноз на сегодня недоступен."
+
+    lines: List[str] = [f"Погода на {d_msk.isoformat()}:"]
+    if include_fact:
+        fact = raw.get("fact")
+        if isinstance(fact, dict):
+            lines.append(
+                f"Сейчас: {_condition_emoji(fact)} {_fmt_temp_short(fact)} {_fmt_wind_short(fact)}"
+            )
+    for key, _ in _PART_ORDER:
+        p = parts.get(key)
+        if isinstance(p, dict):
+            lines.append(_deterministic_part_line(key, p))
+    return "\n".join(lines)
 
 
 def _temp_line(part: Dict[str, Any]) -> str:
@@ -200,20 +324,6 @@ def format_weather_for_system_prompt() -> str:
         return "Погода: данные пока недоступны (кэш пуст или ошибка загрузки)."
     when = fetched or datetime.now(_TZ)
     block = _build_human_block(raw, when, include_fact=True)
-    if fetched:
-        block += f"\n(данные получены: {fetched.astimezone(_TZ).strftime('%Y-%m-%d %H:%M %Z')})"
-    return block
-
-
-def format_weather_facts_for_narrative(*, include_fact: bool = False) -> str:
-    """Structured facts for weather narrative LLM; optionally include current fact block."""
-    with _state_lock:
-        raw = _raw
-        fetched = _fetched_at
-    if not raw:
-        return "Погода: данные пока недоступны (кэш пуст или ошибка загрузки)."
-    when = fetched or datetime.now(_TZ)
-    block = _build_human_block(raw, when, include_fact=include_fact)
     if fetched:
         block += f"\n(данные получены: {fetched.astimezone(_TZ).strftime('%Y-%m-%d %H:%M %Z')})"
     return block
@@ -408,32 +518,38 @@ def _broadcast_weather_narrative(text: str) -> None:
 
 def _morning_job() -> None:
     refresh_if_stale(force=True)
-    from .mt_ai_reply import complete_weather_narrative
+    from .mt_ai_reply import complete_weather_preface_with_context
     from .mt_telegram import mesh_auto_reply_source_caption
 
     with _state_lock:
-        if _raw is None:
+        raw = _raw
+        if raw is None:
             mt_state.log.log("log", "weather morning job: no raw data for narrative")
             return
-    facts = format_weather_facts_for_narrative(include_fact=True)
+        fetched = _fetched_at
+    forecast = format_mesh_weather_forecast(include_fact=True)
+    when = fetched or datetime.now(_TZ)
+    if _parts_for_date(raw, when.astimezone(_TZ).date()) is None:
+        mt_state.log.log("log", "weather morning job: no forecast parts for today; skip broadcast")
+        return
     try:
-        narrative, prov = complete_weather_narrative(
-            facts,
-            extra_system_instruction=(
-                "Это утренний плановый прогноз. Начни ответ с короткого пожелания доброго утра."
-            ),
+        preface, prov = complete_weather_preface_with_context(
+            forecast,
+            channel_index=config.WEATHER_BROADCAST_CHANNEL_INDEX,
+            dm_peer=None,
+            is_direct_message=False,
+            extra_system_instruction="Это утренний плановый прогноз для общего канала.",
             gemini_max_retries=3,
             gemini_retry_initial_delay_sec=15.0,
         )
     except Exception as ex:
-        mt_state.log.log("log", f"weather narrative LLM failed: {ex}")
-        return
-    narrative = (narrative or "").strip()
-    if not narrative:
-        mt_state.log.log("log", "weather morning job: empty narrative")
-        return
+        mt_state.log.log("log", f"weather preface LLM failed: {ex}")
+        preface = ""
+        prov = "llama"
+    preface = (preface or "").strip()
     note = (config.WEATHER_MORNING_AI_FOOTNOTE or "").strip()
-    out = f"{narrative}\n\n{note}" if note else narrative
+    main = f"{preface}\n\n{forecast}".strip() if preface else forecast
+    out = f"{main}\n\n{note}" if note else main
     _broadcast_weather_narrative(out)
     if config.TELEGRAM_NOTIFY_MESH_AUTO_REPLY:
         try:
