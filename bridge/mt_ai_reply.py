@@ -284,10 +284,12 @@ def maybe_automated_weather_forecast(details: MeshMessageDetails, interface: Any
     forecast = mt_weather.format_mesh_weather_forecast(
         include_fact=details.is_direct_message
     )
+    season = mt_weather.current_season_name()
     try:
         dm_peer = details.sender_node_id if details.is_direct_message else None
         preface, prov = complete_weather_preface_with_context(
             forecast,
+            season_name=season,
             channel_index=details.channel_index,
             dm_peer=dm_peer,
             is_direct_message=details.is_direct_message,
@@ -867,6 +869,7 @@ def _call_ai_with_routing(
 def complete_weather_preface_with_context(
     forecast_block: str,
     *,
+    season_name: Optional[str],
     channel_index: int,
     dm_peer: Optional[int],
     is_direct_message: bool,
@@ -885,7 +888,8 @@ def complete_weather_preface_with_context(
     preface_prompt = (
         gemini_prompt if _use_gemini_for_request(is_direct_message=is_direct_message) else llama_prompt
     )
-    prompt_user = f"{preface_prompt}\n\nПрогноз:\n{forecast_block}"
+    season_line = f"Время года: {season_name}\n" if (season_name or "").strip() else ""
+    prompt_user = f"{preface_prompt}\n\n{season_line}Прогноз:\n{forecast_block}"
     messages = [*history, {"role": "user", "content": prompt_user}]
 
     extra = (extra_system_instruction or "").strip()

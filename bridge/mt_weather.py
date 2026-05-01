@@ -130,7 +130,7 @@ def _fmt_temp_short(part: Dict[str, Any]) -> str:
     for key in ("temp_avg", "temp", "temp_max", "temp_min"):
         v = _fmt_num(part.get(key))
         if v is not None:
-            sign = "+" if not v.startswith("-") else ""
+            sign = "+" if (not v.startswith("-") and v != "0") else ""
             return f"{sign}{v}°C"
     return "н/д"
 
@@ -140,8 +140,18 @@ def _fmt_wind_short(part: Dict[str, Any]) -> str:
     arrow = _WIND_DIR_ARROW.get(direction, "•")
     ws_raw = part.get("wind_speed")
     wg_raw = part.get("wind_gust")
-    ws = _fmt_num(ws_raw)
-    wg = _fmt_num(wg_raw)
+    ws: Optional[str] = None
+    wg: Optional[str] = None
+    if ws_raw is not None:
+        try:
+            ws = _fmt_num(round(float(ws_raw)))
+        except (TypeError, ValueError):
+            ws = None
+    if wg_raw is not None:
+        try:
+            wg = _fmt_num(round(float(wg_raw)))
+        except (TypeError, ValueError):
+            wg = None
     if ws is None and wg is None:
         return f"{arrow} н/д"
     if ws is None:
@@ -185,7 +195,7 @@ def format_mesh_weather_forecast(*, include_fact: bool = False) -> str:
     if not parts:
         return "Погода: прогноз на сегодня недоступен."
 
-    lines: List[str] = [f"Погода на {d_msk.isoformat()}:"]
+    lines: List[str] = []
     if include_fact:
         fact = raw.get("fact")
         if isinstance(fact, dict):
@@ -197,6 +207,14 @@ def format_mesh_weather_forecast(*, include_fact: bool = False) -> str:
         if isinstance(p, dict):
             lines.append(_deterministic_part_line(key, p))
     return "\n".join(lines)
+
+
+def current_season_name() -> str:
+    """Season label in WEATHER_TZ for prompt context."""
+    with _state_lock:
+        fetched = _fetched_at
+    when = fetched or datetime.now(_TZ)
+    return _season_name_ru(when.astimezone(_TZ).date())
 
 
 def _temp_line(part: Dict[str, Any]) -> str:
@@ -528,6 +546,7 @@ def _morning_job() -> None:
             return
         fetched = _fetched_at
     forecast = format_mesh_weather_forecast(include_fact=True)
+    season = current_season_name()
     when = fetched or datetime.now(_TZ)
     if _parts_for_date(raw, when.astimezone(_TZ).date()) is None:
         mt_state.log.log("log", "weather morning job: no forecast parts for today; skip broadcast")
@@ -535,6 +554,7 @@ def _morning_job() -> None:
     try:
         preface, prov = complete_weather_preface_with_context(
             forecast,
+            season_name=season,
             channel_index=config.WEATHER_BROADCAST_CHANNEL_INDEX,
             dm_peer=None,
             is_direct_message=False,
