@@ -282,7 +282,7 @@ def record_received_message(
         _append_event(event, {"sender_node_id": sid, "message": str(message)})
         if is_ping:
             _stats.ping_test_received_total += 1
-            _append_event(_EVENT_MSG_PING, {"sender_node_id": sid, "message": str(message)})
+            _append_event(_EVENT_MSG_PING, {"sender_node_id": sid})
 
 
 def _parse_node_identity(node_num: int, node_info: object) -> Dict[str, object]:
