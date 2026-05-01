@@ -179,6 +179,7 @@ def send_mesh_text(
             f"mesh send ignored: empty message after trim dest={dest_s} {pki_s}",
         )
         return None
+    stats_message = "".join(chunks)
 
     result: Any = None
     had_routing_ack = False
@@ -285,12 +286,19 @@ def send_mesh_text(
     if had_routing_ack:
         try:
             is_dm = True
+            receiver_node_id: Optional[int] = None
             try:
                 dest_num = int(destination_id)
                 is_dm = dest_num not in (0, BROADCAST_NUM)
+                if is_dm:
+                    receiver_node_id = dest_num
             except (TypeError, ValueError):
                 is_dm = str(destination_id) != str(BROADCAST_ADDR)
-            mt_stats.record_sent_message(is_direct_message=is_dm)
+            mt_stats.record_sent_message(
+                is_direct_message=is_dm,
+                message=stats_message,
+                receiver_node_id=receiver_node_id,
+            )
         except Exception as ex:
             mt_state.log.log("log", f"stats record sent failed: {ex}")
     if record_context and parts_ok == n and n > 0:

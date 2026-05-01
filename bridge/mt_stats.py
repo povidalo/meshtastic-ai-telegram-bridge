@@ -254,11 +254,19 @@ def _append_event(event: str, params: Optional[Dict[str, object]] = None) -> Non
     _append_event_line(payload)
 
 
-def record_sent_message(*, is_direct_message: bool) -> None:
+def record_sent_message(
+    *,
+    is_direct_message: bool,
+    message: str,
+    receiver_node_id: Optional[int] = None,
+) -> None:
     event = _EVENT_MSG_DM_OUT if is_direct_message else _EVENT_MSG_BROADCAST_OUT
+    params: Dict[str, object] = {"message": str(message)}
+    if is_direct_message and receiver_node_id is not None:
+        params["receiver_node_id"] = int(receiver_node_id)
     with _lock:
         _stats.sent_total += 1
-        _append_event(event)
+        _append_event(event, params)
 
 
 def record_received_message(
@@ -271,7 +279,7 @@ def record_received_message(
         sid = int(sender_node_id)
         _stats.received_total += 1
         _stats.active_user_ids.add(sid)
-        _append_event(event, {"sender_node_id": sid})
+        _append_event(event, {"sender_node_id": sid, "message": str(message)})
         if is_ping:
             _stats.ping_test_received_total += 1
             _append_event(_EVENT_MSG_PING, {"sender_node_id": sid})
