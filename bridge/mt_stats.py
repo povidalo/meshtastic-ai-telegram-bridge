@@ -207,6 +207,29 @@ def _last_known_node_names() -> dict[int, tuple[str, str]]:
     return names_by_id
 
 
+def _has_any_node_discovered_events() -> bool:
+    path = config.BRIDGE_STATS_EVENTS_FILE
+    if not path.is_file():
+        return False
+    try:
+        with path.open("r", encoding="utf-8") as fp:
+            for raw_line in fp:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(row, dict):
+                    continue
+                if row.get("event") == _EVENT_NODE_DISCOVERED:
+                    return True
+    except OSError as ex:
+        mt_state.log.log("log", f"stats events read failed: {ex}")
+    return False
+
+
 def load_stats_from_disk() -> bool:
     """Load historical event stream and rebuild in-memory counters."""
     if not config.BRIDGE_STATS_EVENTS_FILE.is_file():
@@ -273,10 +296,55 @@ def _parse_node_identity(node_num: int, node_info: object) -> Dict[str, object]:
     }
 
 
-def sync_known_nodes(interface: object) -> None:
+def _node_short_name_for_display(node_payload: Dict[str, object]) -> str:
+    short_name_raw = node_payload.get("short_name")
+    short_name = short_name_raw.strip() if isinstance(short_name_raw, str) else ""
+    if short_name:
+        return short_name
+    try:
+        node_id = int(node_payload.get("node_id"))
+    except (TypeError, ValueError):
+        return "node"
+    return f"{node_id:08x}"[-4:]
+
+
+def _greeting_for_new_nodes(new_nodes: list[Dict[str, object]]) -> Optional[str]:
+    if len(new_nodes) == 0 or len(new_nodes) > 3:
+        return None
+    if len(new_nodes) == 1:
+        node = new_nodes[0]
+        short_name = _node_short_name_for_display(node)
+        long_name_raw = node.get("long_name")
+        long_name = long_name_raw.strip() if isinstance(long_name_raw, str) else ""
+        if not long_name:
+            long_name = short_name
+        return f"Добро пожаловать, {long_name} ({short_name})!"
+    shorts = [_node_short_name_for_display(node) for node in new_nodes]
+    return f"Добро пожаловать, {', '.join(shorts)}!"
+
+
+def _send_new_nodes_greeting(interface: object, new_nodes: list[Dict[str, object]]) -> None:
+    text = _greeting_for_new_nodes(new_nodes)
+    if not text:
+        return
+    try:
+        from meshtastic import BROADCAST_ADDR
+        from .mt_mesh_send import send_mesh_text
+
+        send_mesh_text(
+            interface,
+            text,
+            channel_index=config.WEATHER_BROADCAST_CHANNEL_INDEX,
+            destination_id=BROADCAST_ADDR,
+        )
+    except Exception as ex:
+        mt_state.log.log("log", f"new node greeting failed: {ex}")
+
+
+def sync_known_nodes(interface: object) -> list[Dict[str, object]]:
     nodes_by_num = getattr(interface, "nodesByNum", None)
     if not isinstance(nodes_by_num, dict):
-        return
+        return []
     newly_seen: list[Dict[str, object]] = []
     renamed: list[Dict[str, object]] = []
     last_known_names = _last_known_node_names()
@@ -327,6 +395,7 @@ def sync_known_nodes(interface: object) -> None:
             f"long {node['previous_long_name']!r}->{node['long_name']!r} "
             f"short {node['previous_short_name']!r}->{node['short_name']!r}",
         )
+    return newly_seen
 
 
 def _node_discovery_loop() -> None:
@@ -335,7 +404,10 @@ def _node_discovery_loop() -> None:
             iface = mt_state._iface_ref[0]
         if iface is not None:
             try:
-                sync_known_nodes(iface)
+                had_prior_discovery_events = _has_any_node_discovered_events()
+                new_nodes = sync_known_nodes(iface)
+                if had_prior_discovery_events and new_nodes:
+                    _send_new_nodes_greeting(iface, new_nodes)
             except Exception as ex:
                 mt_state.log.log("log", f"node discovery sync failed: {ex}")
             sleep_sec = max(5.0, float(config.BRIDGE_NODE_DISCOVERY_POLL_SEC))
