@@ -866,6 +866,34 @@ def _call_ai_with_routing(
     return _call_llama(messages, system_prompt=system_prompt).strip(), "llama"
 
 
+def _sanitize_weather_preface(text: str) -> str:
+    """Keep only short intro/comment; drop deterministic forecast lines if model echoed them."""
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+    drop_prefixes = (
+        "Погода на ",
+        "Сейчас:",
+        "Утро:",
+        "День:",
+        "Вечер:",
+        "Ночь:",
+    )
+    kept: List[str] = []
+    for line in raw.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        if any(s.startswith(prefix) for prefix in drop_prefixes):
+            continue
+        kept.append(s)
+    out = " ".join(kept).strip()
+    if not out:
+        return ""
+    # Safety cap: intro should stay concise even if model gets verbose.
+    return out[:220].rstrip()
+
+
 def complete_weather_preface_with_context(
     forecast_block: str,
     *,
@@ -896,7 +924,7 @@ def complete_weather_preface_with_context(
     if extra:
         llama_prompt = f"{llama_prompt}\n{extra}"
         gemini_prompt = f"{gemini_prompt}\n{extra}"
-    return _call_ai_with_routing(
+    preface, source = _call_ai_with_routing(
         messages,
         is_direct_message=is_direct_message,
         system_prompt=llama_prompt,
@@ -904,6 +932,7 @@ def complete_weather_preface_with_context(
         gemini_max_retries=gemini_max_retries,
         gemini_retry_initial_delay_sec=gemini_retry_initial_delay_sec,
     )
+    return _sanitize_weather_preface(preface), source
 
 
 def _process_loop(key: AiContextKey) -> None:
