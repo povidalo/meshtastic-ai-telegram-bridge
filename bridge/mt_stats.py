@@ -286,9 +286,9 @@ def _parse_node_identity(node_num: int, node_info: object) -> Dict[str, object]:
             ln = user.get("longName")
             sn = user.get("shortName")
             if isinstance(ln, str):
-                long_name = ln
+                long_name = ln.strip()
             if isinstance(sn, str):
-                short_name = sn
+                short_name = sn.strip()
     return {
         "node_id": int(node_num),
         "long_name": long_name,
