@@ -4,6 +4,7 @@ import time
 from typing import Any, Callable, List, Optional, Tuple, Union
 
 from meshtastic import BROADCAST_ADDR
+from meshtastic import BROADCAST_NUM
 from meshtastic.mesh_interface import MeshInterface
 from meshtastic.protobuf import portnums_pb2
 
@@ -282,7 +283,13 @@ def send_mesh_text(
             time.sleep(config.MESH_MULTI_PART_DELAY_SEC)
     if had_routing_ack:
         try:
-            mt_stats.record_sent_message()
+            is_dm = True
+            try:
+                dest_num = int(destination_id)
+                is_dm = dest_num not in (0, BROADCAST_NUM)
+            except (TypeError, ValueError):
+                is_dm = str(destination_id) != str(BROADCAST_ADDR)
+            mt_stats.record_sent_message(is_direct_message=is_dm)
         except Exception as ex:
             mt_state.log.log("log", f"stats record sent failed: {ex}")
     if parts_ok == n and n > 0:

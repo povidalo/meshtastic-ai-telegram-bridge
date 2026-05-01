@@ -16,8 +16,10 @@ _CONFIG_DIR = Path(__file__).resolve().parent  # Directory containing this file 
 WEATHER_CACHE_FILE = _CONFIG_DIR / "weather_cache.json"  # On-disk cache for API responses to avoid hammering Yandex.
 # Maps mesh packet id → original sender node id so threaded replies resolve correctly; survives restarts.
 MESH_PACKET_ORIGIN_CACHE_FILE = _CONFIG_DIR / "mesh_packet_origin_cache.json"
-# Persistent counters for bridge traffic stats used in AI prompt context.
-BRIDGE_STATS_CACHE_FILE = _CONFIG_DIR / "bridge_stats_cache.json"
+# Append-only JSONL stream of bridge events for time-windowed statistics.
+BRIDGE_STATS_EVENTS_FILE = _CONFIG_DIR / "bridge_stats_events.jsonl"
+# How often to refresh known mesh nodes and log newly discovered ones.
+BRIDGE_NODE_DISCOVERY_POLL_SEC = 1800.0
 # Persistent per-channel AI context messages (broadcast + DM threads).
 AI_CONTEXT_CACHE_FILE = _CONFIG_DIR / "context.json"
 WEATHER_STALE_HOURS = 24  # Refetch forecast when cached data is older than this many hours.

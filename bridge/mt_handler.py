@@ -58,6 +58,7 @@ def on_mesh_text_receive(packet: dict[str, Any], interface: Any) -> None:
             mt_stats.record_received_message(
                 sender_node_id=details.sender_node_id,
                 message=details.message,
+                is_direct_message=details.is_direct_message,
             )
         except Exception as ex:
             mt_state.log.log("log", f"stats record received failed: {ex}")
