@@ -35,6 +35,7 @@ _EVENT_MSG_DM_IN = "msg_dm_in"
 _EVENT_MSG_DM_OUT = "msg_dm_out"
 _EVENT_MSG_PING = "msg_ping"
 _EVENT_NODE_DISCOVERED = "node_discovered"
+_EVENT_NODE_RENAMED = "node_renamed"
 
 
 def _compile_pong_re() -> Optional[re.Pattern[str]]:
@@ -125,7 +126,8 @@ def _build_stats_from_events_file(*, since_ts_ms: Optional[int] = None) -> _Stat
 
 
 def _recent_node_short_names(*, since_ts_ms: int) -> list[str]:
-    names_by_id: dict[int, str] = {}
+    discovered_node_ids: set[int] = set()
+    latest_short_by_id: dict[int, str] = {}
     path = config.BRIDGE_STATS_EVENTS_FILE
     try:
         with path.open("r", encoding="utf-8") as fp:
@@ -137,13 +139,10 @@ def _recent_node_short_names(*, since_ts_ms: int) -> list[str]:
                     row = json.loads(line)
                 except ValueError:
                     continue
-                if not isinstance(row, dict) or row.get("event") != _EVENT_NODE_DISCOVERED:
+                if not isinstance(row, dict):
                     continue
-                try:
-                    ts_ms = int(row.get("timestamp"))
-                except (TypeError, ValueError):
-                    continue
-                if ts_ms < since_ts_ms:
+                event = row.get("event")
+                if event not in (_EVENT_NODE_DISCOVERED, _EVENT_NODE_RENAMED):
                     continue
                 params = row.get("params")
                 if not isinstance(params, dict):
@@ -153,16 +152,59 @@ def _recent_node_short_names(*, since_ts_ms: int) -> list[str]:
                 except (TypeError, ValueError):
                     continue
                 short_name_raw = params.get("short_name")
-                short_name = (
-                    short_name_raw.strip()
-                    if isinstance(short_name_raw, str)
-                    else ""
-                )
-                names_by_id[node_id] = short_name or f"{node_id:08x}"[-4:]
+                short_name = short_name_raw.strip() if isinstance(short_name_raw, str) else ""
+                latest_short_by_id[node_id] = short_name or f"{node_id:08x}"[-4:]
+                if event != _EVENT_NODE_DISCOVERED:
+                    continue
+                try:
+                    ts_ms = int(row.get("timestamp"))
+                except (TypeError, ValueError):
+                    continue
+                if ts_ms < since_ts_ms:
+                    continue
+                discovered_node_ids.add(node_id)
     except OSError as ex:
         mt_state.log.log("log", f"stats events read failed: {ex}")
         return []
-    return sorted(names_by_id.values(), key=lambda n: n.lower())
+    names = [latest_short_by_id.get(node_id, f"{node_id:08x}"[-4:]) for node_id in discovered_node_ids]
+    return sorted(names, key=lambda n: n.lower())
+
+
+def _last_known_node_names() -> dict[int, tuple[str, str]]:
+    names_by_id: dict[int, tuple[str, str]] = {}
+    path = config.BRIDGE_STATS_EVENTS_FILE
+    if not path.is_file():
+        return names_by_id
+    try:
+        with path.open("r", encoding="utf-8") as fp:
+            for raw_line in fp:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(row, dict):
+                    continue
+                event = row.get("event")
+                if event not in (_EVENT_NODE_DISCOVERED, _EVENT_NODE_RENAMED):
+                    continue
+                params = row.get("params")
+                if not isinstance(params, dict):
+                    continue
+                try:
+                    node_id = int(params.get("node_id"))
+                except (TypeError, ValueError):
+                    continue
+                long_name_raw = params.get("long_name")
+                short_name_raw = params.get("short_name")
+                long_name = long_name_raw.strip() if isinstance(long_name_raw, str) else ""
+                short_name = short_name_raw.strip() if isinstance(short_name_raw, str) else ""
+                names_by_id[node_id] = (long_name, short_name)
+    except OSError as ex:
+        mt_state.log.log("log", f"stats events read failed: {ex}")
+    return names_by_id
 
 
 def load_stats_from_disk() -> bool:
@@ -236,23 +278,54 @@ def sync_known_nodes(interface: object) -> None:
     if not isinstance(nodes_by_num, dict):
         return
     newly_seen: list[Dict[str, object]] = []
+    renamed: list[Dict[str, object]] = []
+    last_known_names = _last_known_node_names()
     with _lock:
         for node_num, node_info in nodes_by_num.items():
             try:
                 node_id = int(node_num)
             except (TypeError, ValueError):
                 continue
+            node_payload = _parse_node_identity(node_id, node_info)
             if node_id in _stats.known_node_ids:
+                last_known = last_known_names.get(node_id)
+                if last_known is None:
+                    continue
+                prev_long_name, prev_short_name = last_known
+                if (
+                    prev_long_name == node_payload["long_name"]
+                    and prev_short_name == node_payload["short_name"]
+                ):
+                    continue
+                rename_payload = dict(node_payload)
+                rename_payload["previous_long_name"] = prev_long_name
+                rename_payload["previous_short_name"] = prev_short_name
+                _append_event(_EVENT_NODE_RENAMED, rename_payload)
+                renamed.append(rename_payload)
+                last_known_names[node_id] = (
+                    str(node_payload["long_name"]),
+                    str(node_payload["short_name"]),
+                )
                 continue
             _stats.known_node_ids.add(node_id)
-            node_payload = _parse_node_identity(node_id, node_info)
             _append_event(_EVENT_NODE_DISCOVERED, node_payload)
             newly_seen.append(node_payload)
+            last_known_names[node_id] = (
+                str(node_payload["long_name"]),
+                str(node_payload["short_name"]),
+            )
     for node in newly_seen:
         mt_state.log.log(
             "log",
             f"new mesh node discovered: id={node['node_id']} "
             f"long={node['long_name']!r} short={node['short_name']!r}",
+        )
+    for node in renamed:
+        mt_state.log.log(
+            "log",
+            f"mesh node renamed: id={node['node_id']} "
+            f"long {node['previous_long_name']!r}->{node['long_name']!r} "
+            f"short {node['previous_short_name']!r}->{node['short_name']!r}",
         )
 
 
