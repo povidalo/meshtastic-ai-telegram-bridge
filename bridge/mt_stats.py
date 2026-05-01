@@ -329,14 +329,34 @@ def _send_new_nodes_greeting(interface: object, new_nodes: list[Dict[str, object
         return
     try:
         from meshtastic import BROADCAST_ADDR
+        from . import mt_ai_reply
         from .mt_mesh_send import send_mesh_text
 
-        send_mesh_text(
+        sent_pkt = send_mesh_text(
             interface,
             text,
             channel_index=config.WEATHER_BROADCAST_CHANNEL_INDEX,
             destination_id=BROADCAST_ADDR,
+            record_context=False,
         )
+        if sent_pkt is None:
+            return
+        if config.TELEGRAM_NOTIFY_MESH_AUTO_REPLY:
+            try:
+                mt_state.notifier.send(
+                    f"[mesh greet]\n{text}",
+                    config.TELEGRAM_CHAT_ID,
+                )
+            except Exception as ex:
+                mt_state.log.log("log", f"telegram new-node greet notify failed: {ex}")
+        try:
+            mt_ai_reply.record_mesh_context_outgoing(
+                channel_index=config.WEATHER_BROADCAST_CHANNEL_INDEX,
+                destination_id=BROADCAST_ADDR,
+                full_text=text,
+            )
+        except Exception as ex:
+            mt_state.log.log("log", f"new-node greet context record failed: {ex}")
     except Exception as ex:
         mt_state.log.log("log", f"new node greeting failed: {ex}")
 

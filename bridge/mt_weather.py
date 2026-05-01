@@ -217,6 +217,18 @@ def current_season_name() -> str:
     return _season_name_ru(when.astimezone(_TZ).date())
 
 
+def should_include_fact(*, max_age: timedelta = timedelta(hours=1)) -> bool:
+    """Use fact line only when weather payload is fresh enough."""
+    with _state_lock:
+        fetched = _fetched_at
+    if fetched is None:
+        return False
+    if fetched.tzinfo is None:
+        fetched = fetched.replace(tzinfo=_TZ)
+    now = datetime.now(fetched.tzinfo or _TZ)
+    return (now - fetched) <= max_age
+
+
 def _temp_line(part: Dict[str, Any]) -> str:
     t_min = part.get("temp_min")
     t_max = part.get("temp_max")
@@ -545,7 +557,7 @@ def _morning_job() -> None:
             mt_state.log.log("log", "weather morning job: no raw data for narrative")
             return
         fetched = _fetched_at
-    forecast = format_mesh_weather_forecast(include_fact=True)
+    forecast = format_mesh_weather_forecast(include_fact=should_include_fact())
     season = current_season_name()
     when = fetched or datetime.now(_TZ)
     if _parts_for_date(raw, when.astimezone(_TZ).date()) is None:

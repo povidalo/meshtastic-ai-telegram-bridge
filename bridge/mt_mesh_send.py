@@ -151,6 +151,7 @@ def send_mesh_text(
     destination_id: Union[int, str] = BROADCAST_ADDR,
     reply_id: Optional[int] = None,
     pki_encrypted: bool = False,
+    record_context: bool = True,
 ) -> Any:
     """Send text with wantAck and wait for ROUTING_APP ACK/NAK after each part."""
     dest_s = str(destination_id)
@@ -292,7 +293,7 @@ def send_mesh_text(
             mt_stats.record_sent_message(is_direct_message=is_dm)
         except Exception as ex:
             mt_state.log.log("log", f"stats record sent failed: {ex}")
-    if parts_ok == n and n > 0:
+    if record_context and parts_ok == n and n > 0:
         assembled = "".join(chunks)
         if assembled.strip():
             try:

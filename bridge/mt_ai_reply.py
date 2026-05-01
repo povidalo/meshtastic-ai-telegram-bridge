@@ -282,7 +282,7 @@ def maybe_automated_weather_forecast(details: MeshMessageDetails, interface: Any
 
     weather_source: MeshAutoReplySource = "automated"
     forecast = mt_weather.format_mesh_weather_forecast(
-        include_fact=details.is_direct_message
+        include_fact=mt_weather.should_include_fact()
     )
     season = mt_weather.current_season_name()
     try:
