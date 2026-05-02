@@ -37,6 +37,30 @@ _EVENT_MSG_PING = "msg_ping"
 _EVENT_NODE_DISCOVERED = "node_discovered"
 _EVENT_NODE_RENAMED = "node_renamed"
 
+_MSHT_DEFAULT_LONG_RE = re.compile(r"(?i)^Meshtastic\s+(.+)$")
+
+_rename_greet_done_ids: Optional[Set[int]] = None
+_rename_greet_done_lock = threading.Lock()
+
+
+def _read_rename_greet_done_ids_from_disk() -> Set[int]:
+    path = config.BRIDGE_RENAME_GREET_DONE_FILE
+    if not path.is_file():
+        return set()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    raw = data.get("node_ids")
+    out: Set[int] = set()
+    if isinstance(raw, list):
+        for item in raw:
+            try:
+                out.add(int(item))
+            except (TypeError, ValueError):
+                continue
+    return out
+
 
 def _compile_pong_re() -> Optional[re.Pattern[str]]:
     global _pong_re, _pong_re_initialized
@@ -207,6 +231,124 @@ def _last_known_node_names() -> dict[int, tuple[str, str]]:
     return names_by_id
 
 
+def _first_node_discovered_ts_and_names(
+    node_id: int,
+) -> Optional[tuple[int, str, str]]:
+    """First node_discovered line for this node: (timestamp_ms, long_name, short_name)."""
+    path = config.BRIDGE_STATS_EVENTS_FILE
+    if not path.is_file():
+        return None
+    try:
+        with path.open("r", encoding="utf-8") as fp:
+            for raw_line in fp:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(row, dict) or row.get("event") != _EVENT_NODE_DISCOVERED:
+                    continue
+                params = row.get("params")
+                if not isinstance(params, dict):
+                    continue
+                try:
+                    nid = int(params.get("node_id"))
+                except (TypeError, ValueError):
+                    continue
+                if nid != node_id:
+                    continue
+                try:
+                    ts_ms = int(row.get("timestamp"))
+                except (TypeError, ValueError):
+                    continue
+                long_name_raw = params.get("long_name")
+                short_name_raw = params.get("short_name")
+                long_name = long_name_raw.strip() if isinstance(long_name_raw, str) else ""
+                short_name = short_name_raw.strip() if isinstance(short_name_raw, str) else ""
+                return (ts_ms, long_name, short_name)
+    except OSError as ex:
+        mt_state.log.log("log", f"stats events read failed: {ex}")
+        return None
+    return None
+
+
+def _file_has_default_to_custom_rename(node_id: int) -> bool:
+    """True if any node_renamed event shows default long -> non-default for this node."""
+    path = config.BRIDGE_STATS_EVENTS_FILE
+    if not path.is_file():
+        return False
+    try:
+        with path.open("r", encoding="utf-8") as fp:
+            for raw_line in fp:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(row, dict) or row.get("event") != _EVENT_NODE_RENAMED:
+                    continue
+                params = row.get("params")
+                if not isinstance(params, dict):
+                    continue
+                try:
+                    nid = int(params.get("node_id"))
+                except (TypeError, ValueError):
+                    continue
+                if nid != node_id:
+                    continue
+                pl = params.get("previous_long_name")
+                ps = params.get("previous_short_name")
+                nl = params.get("long_name")
+                ns = params.get("short_name")
+                prev_long = pl.strip() if isinstance(pl, str) else ""
+                prev_short = ps.strip() if isinstance(ps, str) else ""
+                new_long = nl.strip() if isinstance(nl, str) else ""
+                new_short = ns.strip() if isinstance(ns, str) else ""
+                if _is_default_meshtastic_long_name(
+                    prev_long, prev_short
+                ) and not _is_default_meshtastic_long_name(new_long, new_short):
+                    return True
+    except OSError as ex:
+        mt_state.log.log("log", f"stats events read failed: {ex}")
+        return False
+    return False
+
+
+def _load_rename_greet_done_ids() -> Set[int]:
+    global _rename_greet_done_ids
+    with _rename_greet_done_lock:
+        if _rename_greet_done_ids is not None:
+            return _rename_greet_done_ids
+        _rename_greet_done_ids = _read_rename_greet_done_ids_from_disk()
+        return _rename_greet_done_ids
+
+
+def _mark_rename_greet_done(node_id: int) -> None:
+    global _rename_greet_done_ids
+    with _rename_greet_done_lock:
+        ids = set(
+            _rename_greet_done_ids
+            if _rename_greet_done_ids is not None
+            else _read_rename_greet_done_ids_from_disk()
+        )
+        ids.add(int(node_id))
+        _rename_greet_done_ids = ids
+        path = config.BRIDGE_RENAME_GREET_DONE_FILE
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        try:
+            tmp.write_text(
+                json.dumps({"node_ids": sorted(ids)}, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            tmp.replace(path)
+        except OSError as ex:
+            mt_state.log.log("log", f"rename greet done file write failed: {ex}")
+
+
 def _has_any_node_discovered_events() -> bool:
     path = config.BRIDGE_STATS_EVENTS_FILE
     if not path.is_file():
@@ -228,6 +370,19 @@ def _has_any_node_discovered_events() -> bool:
     except OSError as ex:
         mt_state.log.log("log", f"stats events read failed: {ex}")
     return False
+
+
+def _is_default_meshtastic_long_name(long_name: str, short_name: str) -> bool:
+    """True when long name is the firmware default 'Meshtastic <short>'."""
+    ln = (long_name or "").strip()
+    sn = (short_name or "").strip()
+    if not sn:
+        return False
+    m = _MSHT_DEFAULT_LONG_RE.match(ln)
+    if not m:
+        return False
+    rest = (m.group(1) or "").strip()
+    return rest.casefold() == sn.casefold()
 
 
 def load_stats_from_disk() -> bool:
@@ -282,7 +437,7 @@ def record_received_message(
         _append_event(event, {"sender_node_id": sid, "message": str(message)})
         if is_ping:
             _stats.ping_test_received_total += 1
-            _append_event(_EVENT_MSG_PING, {"sender_node_id": sid})
+            _append_event(_EVENT_MSG_PING, {"sender_node_id": sid, "message": str(message)})
 
 
 def _parse_node_identity(node_num: int, node_info: object) -> Dict[str, object]:
@@ -331,6 +486,22 @@ def _greeting_for_new_nodes(new_nodes: list[Dict[str, object]]) -> Optional[str]
     return f"Добро пожаловать, {', '.join(shorts)}!"
 
 
+def _nodes_eligible_for_discovery_greet(
+    nodes: list[Dict[str, object]],
+) -> list[Dict[str, object]]:
+    """Skip nodes whose long name is the default 'Meshtastic <short>'."""
+    out: list[Dict[str, object]] = []
+    for node in nodes:
+        ln_raw = node.get("long_name")
+        sn_raw = node.get("short_name")
+        long_name = ln_raw.strip() if isinstance(ln_raw, str) else ""
+        short_name = sn_raw.strip() if isinstance(sn_raw, str) else ""
+        if _is_default_meshtastic_long_name(long_name, short_name):
+            continue
+        out.append(node)
+    return out
+
+
 def _send_new_nodes_greeting(interface: object, new_nodes: list[Dict[str, object]]) -> None:
     text = _greeting_for_new_nodes(new_nodes)
     if not text:
@@ -369,10 +540,63 @@ def _send_new_nodes_greeting(interface: object, new_nodes: list[Dict[str, object
         mt_state.log.log("log", f"new node greeting failed: {ex}")
 
 
-def sync_known_nodes(interface: object) -> list[Dict[str, object]]:
+def _process_rename_greets_from_file(
+    interface: object, renamed_this_poll: list[Dict[str, object]]
+) -> None:
+    """Greet after default-name discovery + rename + stable poll; state from events file only."""
+    now_ms = _event_timestamp_ms()
+    window_ms = 24 * 60 * 60 * 1000
     nodes_by_num = getattr(interface, "nodesByNum", None)
     if not isinstance(nodes_by_num, dict):
-        return []
+        return
+    renamed_ids = {int(r["node_id"]) for r in renamed_this_poll if "node_id" in r}
+    last_from_file = _last_known_node_names()
+    done_ids = _load_rename_greet_done_ids()
+
+    for node_num in nodes_by_num.keys():
+        try:
+            node_id = int(node_num)
+        except (TypeError, ValueError):
+            continue
+        if node_id in done_ids:
+            continue
+        first = _first_node_discovered_ts_and_names(node_id)
+        if first is None:
+            continue
+        disc_ts, disc_long, disc_short = first
+        if now_ms - disc_ts > window_ms:
+            continue
+        if not _is_default_meshtastic_long_name(disc_long, disc_short):
+            continue
+        if not _file_has_default_to_custom_rename(node_id):
+            continue
+        if node_id in renamed_ids:
+            continue
+        info = nodes_by_num.get(node_id)
+        cur = _parse_node_identity(node_id, info if isinstance(info, dict) else {})
+        cur_long = str(cur.get("long_name") or "")
+        cur_short = str(cur.get("short_name") or "")
+        fl = last_from_file.get(node_id)
+        if fl is None:
+            continue
+        file_long, file_short = fl
+        if (cur_long, cur_short) != (file_long, file_short):
+            continue
+        if _is_default_meshtastic_long_name(cur_long, cur_short):
+            continue
+        eligible = _nodes_eligible_for_discovery_greet([cur])
+        if not eligible:
+            continue
+        _send_new_nodes_greeting(interface, eligible)
+        _mark_rename_greet_done(node_id)
+
+
+def sync_known_nodes(
+    interface: object,
+) -> tuple[list[Dict[str, object]], list[Dict[str, object]]]:
+    nodes_by_num = getattr(interface, "nodesByNum", None)
+    if not isinstance(nodes_by_num, dict):
+        return [], []
     newly_seen: list[Dict[str, object]] = []
     renamed: list[Dict[str, object]] = []
     last_known_names = _last_known_node_names()
@@ -423,7 +647,7 @@ def sync_known_nodes(interface: object) -> list[Dict[str, object]]:
             f"long {node['previous_long_name']!r}->{node['long_name']!r} "
             f"short {node['previous_short_name']!r}->{node['short_name']!r}",
         )
-    return newly_seen
+    return newly_seen, renamed
 
 
 def _node_discovery_loop() -> None:
@@ -433,9 +657,12 @@ def _node_discovery_loop() -> None:
         if iface is not None:
             try:
                 had_prior_discovery_events = _has_any_node_discovered_events()
-                new_nodes = sync_known_nodes(iface)
+                new_nodes, renamed = sync_known_nodes(iface)
+                _process_rename_greets_from_file(iface, renamed)
                 if had_prior_discovery_events and new_nodes:
-                    _send_new_nodes_greeting(iface, new_nodes)
+                    to_greet = _nodes_eligible_for_discovery_greet(new_nodes)
+                    if to_greet:
+                        _send_new_nodes_greeting(iface, to_greet)
             except Exception as ex:
                 mt_state.log.log("log", f"node discovery sync failed: {ex}")
             sleep_sec = max(5.0, float(config.BRIDGE_NODE_DISCOVERY_POLL_SEC))
