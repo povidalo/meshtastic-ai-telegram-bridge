@@ -171,12 +171,12 @@ _PROTO_DATA_PAYLOAD_LEN = int(mesh_pb2.Constants.DATA_PAYLOAD_LEN)
 MESH_PROTO_DATA_PAYLOAD_MAX_BYTES = _PROTO_DATA_PAYLOAD_LEN  # Documented maximum raw payload size for reference.
 MESH_TEXT_PAYLOAD_SAFETY_MARGIN_BYTES = 24  # Shrink each chunk by this many bytes under the protocol max for RF reliability.
 MESH_TEXT_MAX_PAYLOAD_BYTES = _PROTO_DATA_PAYLOAD_LEN - MESH_TEXT_PAYLOAD_SAFETY_MARGIN_BYTES  # Per-part UTF-8 budget when splitting.
-MESH_TEXT_MAX_PARTS = 4  # Maximum number of mesh packets for one logical outgoing message.
+MESH_TEXT_MAX_PARTS = 6  # Maximum number of mesh packets for one logical outgoing message.
 
 MESH_MULTI_PART_DELAY_SEC = 2.0  # Pause between sending consecutive parts of a split message.
 MESH_MULTI_PART_SEND_RETRIES = 3  # Retries per part when sending multi-part text.
 
-MESH_ROUTING_ACK_TIMEOUT_SEC = 120  # Seconds to wait for routing ACK after each send (library default is often 300).
+MESH_ROUTING_ACK_TIMEOUT_SEC = 40  # Seconds to wait for routing ACK after each send (library default is often 300).
 
 # Splits long replies on sentence boundaries before byte chunking (used by mt_mesh_split).
 MESH_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?…])\s+")

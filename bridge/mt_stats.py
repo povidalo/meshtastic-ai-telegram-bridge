@@ -659,6 +659,45 @@ def start_node_discovery_worker() -> None:
     _node_discovery_thread.start()
 
 
+def format_24h_stats_block_for_morning() -> Optional[str]:
+    """24h stats for scheduled morning weather only: omit zero lines; omit block if all zero."""
+    now_ms = _event_timestamp_ms()
+    day_ago_ms = now_ms - (24 * 60 * 60 * 1000)
+    s = _build_stats_from_events_file(since_ts_ms=day_ago_ms)
+    n_new = len(s.known_node_ids)
+    short_names = _recent_node_short_names(since_ts_ms=day_ago_ms)
+    lines: list[str] = []
+    if s.sent_total > 0:
+        lines.append(f"отправлено сообщений: {s.sent_total}")
+    if s.received_total > 0:
+        lines.append(f"получено сообщений: {s.received_total}")
+    if s.ping_test_received_total > 0:
+        lines.append(f"получено ping/test: {s.ping_test_received_total}")
+    if len(s.active_user_ids) > 0:
+        lines.append(f"активных пользователей: {len(s.active_user_ids)}")
+    if n_new > 0:
+        if n_new <= 5 and short_names:
+            lines.append(
+                f"новые ноды: {n_new} ({', '.join(short_names)})"
+            )
+        else:
+            lines.append(f"новые ноды: {n_new}")
+    if not lines:
+        return None
+    return "Статистика за 24 ч:\n" + "\n".join(lines)
+
+
+# Stripped-line starts to drop from LLM weather preface if it echoes 24h stats (morning job).
+WEATHER_PREFACE_STATS_ECHO_PREFIXES: tuple[str, ...] = (
+    "Статистика за 24 ч",
+    "отправлено сообщений:",
+    "получено сообщений:",
+    "получено ping/test:",
+    "активных пользователей:",
+    "новые ноды:",
+)
+
+
 def prompt_summary_block() -> str:
     """Compact all-time + 24h stats block for chat AI prompts."""
     now_ms = _event_timestamp_ms()

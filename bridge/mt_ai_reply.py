@@ -866,8 +866,10 @@ def _call_ai_with_routing(
     return _call_llama(messages, system_prompt=system_prompt).strip(), "llama"
 
 
-def _sanitize_weather_preface(text: str) -> str:
-    """Keep only short intro/comment; drop deterministic forecast lines if model echoed them."""
+def _sanitize_weather_preface(
+    text: str, *, strip_stats_echo: bool = False
+) -> str:
+    """Keep only short intro/comment; drop deterministic forecast/stats lines if model echoed them."""
     raw = (text or "").strip()
     if not raw:
         return ""
@@ -879,6 +881,8 @@ def _sanitize_weather_preface(text: str) -> str:
         "Вечер:",
         "Ночь:",
     )
+    if strip_stats_echo:
+        drop_prefixes = drop_prefixes + mt_stats.WEATHER_PREFACE_STATS_ECHO_PREFIXES
     kept: List[str] = []
     for line in raw.splitlines():
         s = line.strip()
@@ -904,6 +908,7 @@ def complete_weather_preface_with_context(
     extra_system_instruction: Optional[str] = None,
     gemini_max_retries: int = 0,
     gemini_retry_initial_delay_sec: float = 15.0,
+    stats_block_24h: Optional[str] = None,
 ) -> Tuple[str, Literal["gemini", "llama"]]:
     """Generate only a short greeting/comment; deterministic forecast is sent as-is."""
     key = AiContextKey(channel_index=channel_index, dm_peer=dm_peer)
@@ -917,7 +922,12 @@ def complete_weather_preface_with_context(
         gemini_prompt if _use_gemini_for_request(is_direct_message=is_direct_message) else llama_prompt
     )
     season_line = f"Время года: {season_name}\n" if (season_name or "").strip() else ""
-    prompt_user = f"{preface_prompt}\n\n{season_line}Прогноз:\n{forecast_block}"
+    stats_tail = ""
+    if stats_block_24h:
+        stats_tail = f"\n\n{stats_block_24h}"
+    prompt_user = (
+        f"{preface_prompt}\n\n{season_line}Прогноз:\n{forecast_block}{stats_tail}"
+    )
     messages = [*history, {"role": "user", "content": prompt_user}]
 
     extra = (extra_system_instruction or "").strip()
@@ -932,7 +942,10 @@ def complete_weather_preface_with_context(
         gemini_max_retries=gemini_max_retries,
         gemini_retry_initial_delay_sec=gemini_retry_initial_delay_sec,
     )
-    return _sanitize_weather_preface(preface), source
+    return (
+        _sanitize_weather_preface(preface, strip_stats_echo=bool(stats_block_24h)),
+        source,
+    )
 
 
 def _process_loop(key: AiContextKey) -> None:

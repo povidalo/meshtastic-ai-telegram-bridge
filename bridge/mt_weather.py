@@ -16,6 +16,7 @@ from meshtastic import BROADCAST_ADDR
 import config
 
 from . import mt_state
+from . import mt_stats
 from .mt_mesh_send import send_mesh_text
 
 _TZ = ZoneInfo(config.WEATHER_TZ)
@@ -563,6 +564,7 @@ def _morning_job() -> None:
     if _parts_for_date(raw, when.astimezone(_TZ).date()) is None:
         mt_state.log.log("log", "weather morning job: no forecast parts for today; skip broadcast")
         return
+    stats_24h = mt_stats.format_24h_stats_block_for_morning()
     try:
         preface, prov = complete_weather_preface_with_context(
             forecast,
@@ -573,6 +575,7 @@ def _morning_job() -> None:
             extra_system_instruction="Это утренний плановый прогноз для общего канала.",
             gemini_max_retries=3,
             gemini_retry_initial_delay_sec=15.0,
+            stats_block_24h=stats_24h,
         )
     except Exception as ex:
         mt_state.log.log("log", f"weather preface LLM failed: {ex}")
@@ -581,7 +584,13 @@ def _morning_job() -> None:
     preface = (preface or "").strip()
     note = (config.WEATHER_MORNING_AI_FOOTNOTE or "").strip()
     main = f"{preface}\n\n{forecast}".strip() if preface else forecast
-    out = f"{main}\n\n{note}" if note else main
+    # Weather narrative → optional 24h stats → footnote last (same stats computed above for LLM).
+    out_parts: list[str] = [main]
+    if stats_24h:
+        out_parts.append(stats_24h)
+    if note:
+        out_parts.append(note)
+    out = "\n\n".join(out_parts)
     _broadcast_weather_narrative(out)
     if config.TELEGRAM_NOTIFY_MESH_AUTO_REPLY:
         try:
