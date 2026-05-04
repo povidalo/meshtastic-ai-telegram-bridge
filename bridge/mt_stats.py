@@ -349,29 +349,6 @@ def _mark_rename_greet_done(node_id: int) -> None:
             mt_state.log.log("log", f"rename greet done file write failed: {ex}")
 
 
-def _has_any_node_discovered_events() -> bool:
-    path = config.BRIDGE_STATS_EVENTS_FILE
-    if not path.is_file():
-        return False
-    try:
-        with path.open("r", encoding="utf-8") as fp:
-            for raw_line in fp:
-                line = raw_line.strip()
-                if not line:
-                    continue
-                try:
-                    row = json.loads(line)
-                except ValueError:
-                    continue
-                if not isinstance(row, dict):
-                    continue
-                if row.get("event") == _EVENT_NODE_DISCOVERED:
-                    return True
-    except OSError as ex:
-        mt_state.log.log("log", f"stats events read failed: {ex}")
-    return False
-
-
 def _is_default_meshtastic_long_name(long_name: str, short_name: str) -> bool:
     """True when long name is the firmware default 'Meshtastic <short>'."""
     ln = (long_name or "").strip()
@@ -656,10 +633,9 @@ def _node_discovery_loop() -> None:
             iface = mt_state._iface_ref[0]
         if iface is not None:
             try:
-                had_prior_discovery_events = _has_any_node_discovered_events()
                 new_nodes, renamed = sync_known_nodes(iface)
                 _process_rename_greets_from_file(iface, renamed)
-                if had_prior_discovery_events and new_nodes:
+                if new_nodes:
                     to_greet = _nodes_eligible_for_discovery_greet(new_nodes)
                     if to_greet:
                         _send_new_nodes_greeting(iface, to_greet)
