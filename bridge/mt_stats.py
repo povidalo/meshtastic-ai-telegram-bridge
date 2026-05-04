@@ -36,6 +36,7 @@ _EVENT_MSG_DM_OUT = "msg_dm_out"
 _EVENT_MSG_PING = "msg_ping"
 _EVENT_NODE_DISCOVERED = "node_discovered"
 _EVENT_NODE_RENAMED = "node_renamed"
+_EVENT_RENAME_GREET_SENT = "rename_greet_sent"
 
 _MSHT_DEFAULT_LONG_RE = re.compile(r"(?i)^Meshtastic\s+(.+)$")
 
@@ -43,22 +44,33 @@ _rename_greet_done_ids: Optional[Set[int]] = None
 _rename_greet_done_lock = threading.Lock()
 
 
-def _read_rename_greet_done_ids_from_disk() -> Set[int]:
-    path = config.BRIDGE_RENAME_GREET_DONE_FILE
+def _rename_greet_done_ids_from_events() -> Set[int]:
+    """Node ids with a rename_greet_sent line in the stats JSONL."""
+    path = config.BRIDGE_STATS_EVENTS_FILE
     if not path.is_file():
         return set()
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return set()
-    raw = data.get("node_ids")
     out: Set[int] = set()
-    if isinstance(raw, list):
-        for item in raw:
-            try:
-                out.add(int(item))
-            except (TypeError, ValueError):
-                continue
+    try:
+        with path.open("r", encoding="utf-8") as fp:
+            for raw_line in fp:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(row, dict) or row.get("event") != _EVENT_RENAME_GREET_SENT:
+                    continue
+                params = row.get("params")
+                if not isinstance(params, dict):
+                    continue
+                try:
+                    out.add(int(params.get("node_id")))
+                except (TypeError, ValueError):
+                    continue
+    except OSError as ex:
+        mt_state.log.log("log", f"stats events read failed: {ex}")
     return out
 
 
@@ -323,30 +335,24 @@ def _load_rename_greet_done_ids() -> Set[int]:
     with _rename_greet_done_lock:
         if _rename_greet_done_ids is not None:
             return _rename_greet_done_ids
-        _rename_greet_done_ids = _read_rename_greet_done_ids_from_disk()
+        _rename_greet_done_ids = _rename_greet_done_ids_from_events()
         return _rename_greet_done_ids
 
 
 def _mark_rename_greet_done(node_id: int) -> None:
     global _rename_greet_done_ids
+    nid = int(node_id)
     with _rename_greet_done_lock:
         ids = set(
             _rename_greet_done_ids
             if _rename_greet_done_ids is not None
-            else _read_rename_greet_done_ids_from_disk()
+            else _rename_greet_done_ids_from_events()
         )
-        ids.add(int(node_id))
+        if nid in ids:
+            return
+        ids.add(nid)
         _rename_greet_done_ids = ids
-        path = config.BRIDGE_RENAME_GREET_DONE_FILE
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        try:
-            tmp.write_text(
-                json.dumps({"node_ids": sorted(ids)}, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            tmp.replace(path)
-        except OSError as ex:
-            mt_state.log.log("log", f"rename greet done file write failed: {ex}")
+    _append_event(_EVENT_RENAME_GREET_SENT, {"node_id": nid})
 
 
 def _is_default_meshtastic_long_name(long_name: str, short_name: str) -> bool:
