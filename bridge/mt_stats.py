@@ -641,7 +641,7 @@ def _node_discovery_loop() -> None:
             try:
                 new_nodes, renamed = sync_known_nodes(iface)
                 _process_rename_greets_from_file(iface, renamed)
-                if new_nodes:
+                if new_nodes and config.GREET_NEW_NODES:
                     to_greet = _nodes_eligible_for_discovery_greet(new_nodes)
                     if to_greet:
                         _send_new_nodes_greeting(iface, to_greet)
@@ -682,12 +682,13 @@ def format_24h_stats_block_for_morning() -> Optional[str]:
     if len(s.active_user_ids) > 0:
         lines.append(f"активных пользователей: {len(s.active_user_ids)}")
     if n_new > 0:
+        new_nodes_line = f"новые ноды: {n_new}"
         if n_new <= 5 and short_names:
-            lines.append(
-                f"новые ноды: {n_new} ({', '.join(short_names)})"
-            )
-        else:
-            lines.append(f"новые ноды: {n_new}")
+            new_nodes_line = f"новые ноды: {n_new} ({', '.join(short_names)})"
+        return new_nodes_line
+        lines.append(new_nodes_line)
+    else:
+        return None
     if not lines:
         return None
     return "Статистика за 24 ч:\n" + "\n".join(lines)

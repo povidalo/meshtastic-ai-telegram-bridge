@@ -180,3 +180,5 @@ MESH_ROUTING_ACK_TIMEOUT_SEC = 40  # Seconds to wait for routing ACK after each 
 
 # Splits long replies on sentence boundaries before byte chunking (used by mt_mesh_split).
 MESH_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?…])\s+")
+
+GREET_NEW_NODES = False  # Whether to greet new nodes with a message on broadcast.
