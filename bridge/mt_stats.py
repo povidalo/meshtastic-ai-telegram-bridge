@@ -640,11 +640,12 @@ def _node_discovery_loop() -> None:
         if iface is not None:
             try:
                 new_nodes, renamed = sync_known_nodes(iface)
-                _process_rename_greets_from_file(iface, renamed)
-                if new_nodes and config.GREET_NEW_NODES:
-                    to_greet = _nodes_eligible_for_discovery_greet(new_nodes)
-                    if to_greet:
-                        _send_new_nodes_greeting(iface, to_greet)
+                if config.GREET_NEW_NODES:
+                    _process_rename_greets_from_file(iface, renamed)
+                    if new_nodes:
+                        to_greet = _nodes_eligible_for_discovery_greet(new_nodes)
+                        if to_greet:
+                            _send_new_nodes_greeting(iface, to_greet)
             except Exception as ex:
                 mt_state.log.log("log", f"node discovery sync failed: {ex}")
             sleep_sec = max(5.0, float(config.BRIDGE_NODE_DISCOVERY_POLL_SEC))
