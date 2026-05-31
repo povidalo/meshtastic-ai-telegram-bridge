@@ -419,10 +419,36 @@ def _invalidate_broadcast_ai_for_side_thread(channel_index: int) -> None:
 
 
 _MSK = ZoneInfo("Europe/Moscow")
+_WEEKDAYS_RU = (
+    "понедельник",
+    "вторник",
+    "среда",
+    "четверг",
+    "пятница",
+    "суббота",
+    "воскресенье",
+)
+_MONTHS_RU = (
+    "января",
+    "февраля",
+    "марта",
+    "апреля",
+    "мая",
+    "июня",
+    "июля",
+    "августа",
+    "сентября",
+    "октября",
+    "ноября",
+    "декабря",
+)
 
 
 def _format_msk_now() -> str:
-    return datetime.now(_MSK).strftime("%Y-%m-%d %H:%M:%S %Z")
+    now = datetime.now(_MSK)
+    weekday = _WEEKDAYS_RU[now.weekday()].capitalize()
+    month = _MONTHS_RU[now.month - 1]
+    return f"{weekday}, {now.day} {month} {now.year}, {now.strftime('%H:%M:%S %Z')}"
 
 
 def _build_system_prompt(*, use_gemini_prompt: bool) -> str:
@@ -435,7 +461,7 @@ def _build_system_prompt(*, use_gemini_prompt: bool) -> str:
         f"{base_prompt}\n\n"
         f"{wx}\n\n"
         f"{stats}\n\n"
-        f"Время сейчас в Дубне: {_format_msk_now()}."
+        f"Время сейчас: {_format_msk_now()}."
     )
 
 
@@ -916,8 +942,9 @@ def complete_weather_preface_with_context(
     with ctx.lock:
         history = list(ctx.messages)[-_ai_messages_maxlen() :]
 
-    llama_prompt = config.LLAMA_WEATHER_NARRATIVE_SYSTEM_PROMPT
-    gemini_prompt = config.GEMINI_WEATHER_NARRATIVE_SYSTEM_PROMPT
+    now_line = f"Время сейчас: {_format_msk_now()}."
+    llama_prompt = f"{config.LLAMA_WEATHER_NARRATIVE_SYSTEM_PROMPT}\n\n{now_line}"
+    gemini_prompt = f"{config.GEMINI_WEATHER_NARRATIVE_SYSTEM_PROMPT}\n\n{now_line}"
     preface_prompt = (
         gemini_prompt if _use_gemini_for_request(is_direct_message=is_direct_message) else llama_prompt
     )
