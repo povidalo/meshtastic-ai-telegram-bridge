@@ -924,6 +924,19 @@ def _sanitize_weather_preface(
     return out[:220].rstrip()
 
 
+def _extract_new_nodes_count(stats_block_24h: Optional[str]) -> Optional[int]:
+    """Parse `новые ноды: N` from morning stats block if present."""
+    if not stats_block_24h:
+        return None
+    m = re.search(r"(?im)^\s*новые\s+ноды:\s*(\d+)\b", stats_block_24h)
+    if m is None:
+        return None
+    try:
+        return int(m.group(1))
+    except (TypeError, ValueError):
+        return None
+
+
 def complete_weather_preface_with_context(
     forecast_block: str,
     *,
@@ -952,8 +965,16 @@ def complete_weather_preface_with_context(
     stats_tail = ""
     if stats_block_24h:
         stats_tail = f"\n\n{stats_block_24h}"
+    stats_guidance = ""
+    new_nodes_count = _extract_new_nodes_count(stats_block_24h)
+    if new_nodes_count is not None and new_nodes_count < 10:
+        stats_guidance = (
+            "\nВажно: если «новые ноды» меньше 10, не упоминай рост сети и не делай это темой вступления. "
+            "Лучше дай короткий комментарий про погоду, текущий праздник или небольшой неформальный "
+            "«праздник дня»."
+        )
     prompt_user = (
-        f"{preface_prompt}\n\n{season_line}Прогноз:\n{forecast_block}{stats_tail}"
+        f"{preface_prompt}\n\n{season_line}Прогноз:\n{forecast_block}{stats_tail}{stats_guidance}"
     )
     messages = [*history, {"role": "user", "content": prompt_user}]
 
